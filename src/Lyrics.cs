@@ -41,16 +41,30 @@ namespace AMLyrics {
  }
  public sealed class LyricTiming {
   public const double DefaultLeadSeconds = 1.5;
-  readonly Dictionary<string,double> offsets = new Dictionary<string,double>();
-  public double Read(string key) { double value; return offsets.TryGetValue(key, out value) ? value : DefaultLeadSeconds; }
+  Dictionary<string,double> offsets = new Dictionary<string,double>();
+  public double Read(string key) { double value; return key != null && offsets.TryGetValue(key, out value) ? value : DefaultLeadSeconds; }
   public double Adjust(string key, double delta) {
-   double value = Math.Round(Math.Max(-5, Math.Min(5, Read(key) + delta)), 1);
+   double previous = Read(key);
+   if (string.IsNullOrWhiteSpace(key) || !IsFinite(delta)) return previous;
+   double value = Math.Round(ClampOffset(previous + delta), 1);
    offsets[key] = value; return value;
   }
-  public void Reset(string key) { offsets.Remove(key); }
+  public void Reset(string key) { if (key != null) offsets.Remove(key); }
+  public Dictionary<string,double> ReadOffsets() { return new Dictionary<string,double>(offsets); }
+  public void LoadOffsets(IDictionary<string,double> values) { offsets = NormalizeOffsets(values); }
+  internal static Dictionary<string,double> NormalizeOffsets(IDictionary<string,double> values) {
+   var normalized = new Dictionary<string,double>();
+   if (values == null) return normalized;
+   foreach (var entry in values) {
+    if (!string.IsNullOrWhiteSpace(entry.Key) && IsFinite(entry.Value)) normalized[entry.Key] = ClampOffset(entry.Value);
+   }
+   return normalized;
+  }
+  static bool IsFinite(double value) { return !double.IsNaN(value) && !double.IsInfinity(value); }
+  static double ClampOffset(double value) { return Math.Max(-5, Math.Min(5, value)); }
   public static double Position(MediaSample sample, DateTime now, double offset) {
    // Positive offset means show each lyric earlier; negative allows a delayed first line/prelude.
-   return PlaybackMath.Position(sample, now) + Math.Max(-5, Math.Min(5, offset));
+   return PlaybackMath.Position(sample, now) + ClampOffset(offset);
   }
  }
  public static class LrcParser {
