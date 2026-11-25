@@ -7,34 +7,77 @@ namespace AMLyrics {
  public static class Program {
   [STAThread]
   public static int Main(string[] args) {
-   bool smoke = args.Length > 0 && args[0] == "--ui-smoke";
-   bool live = args.Length > 0 && args[0] == "--live-check";
-   bool verification = smoke || live;
-   int desktopIndex = Array.IndexOf(args, "--desktop");
+   bool smoke = false, live = false, autoLaunch = false, hasDesktop = false;
+   string folderArg = null, settingsPath = null, ipcScope = null;
    Guid desktop = Guid.Empty;
-   if (desktopIndex >= 0 && (desktopIndex + 1 >= args.Length || !Guid.TryParse(args[desktopIndex + 1], out desktop))) return 2;
+   for (int i = 0; i < args.Length; i++) {
+    string arg = args[i];
+    if (arg == "--ui-smoke") {
+     smoke = true;
+     if (i + 1 < args.Length && !args[i + 1].StartsWith("--")) folderArg = args[++i];
+    } else if (arg == "--live-check") {
+     live = true;
+     if (i + 1 < args.Length && !args[i + 1].StartsWith("--")) folderArg = args[++i];
+    } else if (arg == "--auto-launch") {
+     autoLaunch = true;
+    } else if (arg == "--desktop") {
+     if (i + 1 >= args.Length || !Guid.TryParse(args[++i], out desktop)) return 2;
+     hasDesktop = true;
+    } else if (arg == "--settings") {
+     if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1])) return 2;
+     settingsPath = Path.GetFullPath(args[++i]);
+    } else if (arg == "--ipc-scope") {
+     if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1])) return 2;
+     ipcScope = args[++i];
+    } else {
+     return 2;
+    }
+   }
+   bool verification = smoke || live;
    string directory = AppDomain.CurrentDomain.BaseDirectory;
+   string singleInstanceMutex = HostIpc.BuildMutexName("AMDesktopLyrics.SingleInstance", ipcScope);
+   string showEventName = HostIpc.BuildMutexName("AMDesktopLyrics.Show", ipcScope);
+   string pipeName = HostIpc.BuildPipeName(ipcScope);
    bool first;
-   using (var mutex = new Mutex(true, verification ? null : @"Local\AMDesktopLyrics.SingleInstance", out first)) {
+   using (var mutex = new Mutex(true, verification ? null : singleInstanceMutex, out first)) {
     if (!first && !verification) {
-     try { using (var existing = EventWaitHandle.OpenExisting(@"Local\AMDesktopLyrics.Show")) existing.Set(); }
-     catch (WaitHandleCannotBeOpenedException) { MessageBox.Show("桌面歌词正在启动，请稍后重试。", "桌面歌词"); }
+     if (autoLaunch) return 0;
+     HostStateSnapshot existingState;
+     string ipcError;
+     if (!HostIpcClient.TrySend(pipeName, HostCommandKind.SetEnabled, true, 1500, out existingState, out ipcError)) {
+      try { using (var existing = EventWaitHandle.OpenExisting(showEventName)) existing.Set(); }
+      catch (WaitHandleCannotBeOpenedException) { MessageBox.Show("桌面歌词正在启动，请稍后重试。", "桌面歌词"); }
+     }
      return 0;
     }
-    using (var show = new EventWaitHandle(false, EventResetMode.AutoReset, verification ? null : @"Local\AMDesktopLyrics.Show"))
+    using (var show = new EventWaitHandle(false, EventResetMode.AutoReset, verification ? null : showEventName))
     using (var stop = new EventWaitHandle(false, EventResetMode.ManualReset)) {
-     var app = new Application { ShutdownMode = ShutdownMode.OnMainWindowClose };
-     IMediaSource media = smoke ? (IMediaSource)new TestMediaSource() : new WindowsMediaSource(Path.Combine(directory, "MediaSession.ps1"));
-     var window = new LyricsWindow(media, new LocalLyricsProvider(), verification);
+     var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+     IMediaSource media = smoke ? (IMediaSource)new TestMediaSource() : new WindowsMediaSource(Path.Combine(directory, "MediaSession.ps1"), false);
+     var window = new LyricsWindow(media, new LocalLyricsProvider(), verification, autoLaunch, settingsPath);
      int result = 0;
      Task listener = null;
-     if (!verification) listener = Task.Run(() => {
-      while (WaitHandle.WaitAny(new WaitHandle[] { show, stop }) == 0) {
-       if (!app.Dispatcher.HasShutdownStarted) app.Dispatcher.BeginInvoke(new Action(window.RestoreWindow));
-      }
-     });
-     else {
-      string folder = args.Length > 1 ? Path.GetFullPath(args[1]) : directory;
+     HostIpcServer ipcServer = null;
+     if (!verification) {
+      listener = Task.Run(() => {
+       while (WaitHandle.WaitAny(new WaitHandle[] { show, stop }) == 0) {
+        if (!app.Dispatcher.HasShutdownStarted) app.Dispatcher.BeginInvoke(new Action(() => window.SetEnabled(true)));
+       }
+      });
+      ipcServer = new HostIpcServer(pipeName, cmd => app.Dispatcher.Invoke(() => {
+       switch (cmd.Kind) {
+        case HostCommandKind.SetEnabled: window.SetEnabled(cmd.FlagValue); break;
+        case HostCommandKind.SetLocked: window.SetLockedFromHost(cmd.FlagValue); break;
+        case HostCommandKind.OpenSettings: window.OpenSettingsFromHost(); break;
+        case HostCommandKind.GetState: break;
+        case HostCommandKind.ClientExited: window.ShutdownForClientExit(); break;
+        case HostCommandKind.Shutdown: window.ShutdownPreservingEnabled(); break;
+       }
+       return window.ReadHostState();
+      }));
+      ipcServer.Start();
+     } else {
+      string folder = !string.IsNullOrWhiteSpace(folderArg) ? Path.GetFullPath(folderArg) : directory;
       window.ShowActivated = false; window.ShowInTaskbar = false;
       window.Loaded += async (s,e) => {
        await Task.Yield();
@@ -56,24 +99,48 @@ namespace AMLyrics {
       };
      }
      try {
-      if (desktopIndex >= 0) {
-       window.ShowActivated = false;
-       window.WindowState = WindowState.Minimized;
-       window.Show();
-       DesktopPlacement.MoveOwnWindow(window, desktop);
-       window.WindowState = WindowState.Normal;
+      if (verification) {
+       if (hasDesktop) {
+        window.ShowActivated = false;
+        window.WindowState = WindowState.Minimized;
+        window.Show();
+        DesktopPlacement.MoveOwnWindow(window, desktop);
+        window.WindowState = WindowState.Normal;
+       } else {
+        window.Show();
+       }
+      } else {
+       window.InitializeStartupState();
+       if (window.ShouldStartVisible) {
+        if (hasDesktop) {
+         window.ShowActivated = false;
+         window.WindowState = WindowState.Minimized;
+         window.Show();
+         DesktopPlacement.MoveOwnWindow(window, desktop);
+         window.WindowState = WindowState.Normal;
+        } else {
+         window.Show();
+        }
+       } else {
+        new System.Windows.Interop.WindowInteropHelper(window).EnsureHandle();
+       }
       }
-      app.Run(window);
+      app.Run();
      } catch (Exception ex) {
       result = 1;
-      if (verification && args.Length > 1) {
-       string failureFolder = Path.GetFullPath(args[1]);
+      if (verification && !string.IsNullOrWhiteSpace(folderArg)) {
+       string failureFolder = Path.GetFullPath(folderArg);
        Directory.CreateDirectory(failureFolder);
        File.WriteAllText(Path.Combine(failureFolder, "startup-error.txt"), ex.ToString());
       }
       window.Close();
      }
-     finally { stop.Set(); if (listener != null) listener.Wait(2000); media.Dispose(); }
+     finally {
+      if (ipcServer != null) ipcServer.Dispose();
+      stop.Set();
+      if (listener != null) listener.Wait(2000);
+      media.Dispose();
+     }
      return result;
     }
    }

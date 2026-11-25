@@ -28,6 +28,9 @@ namespace AMLyrics {
   readonly LyricsHitTestBridge hitTestBridge;
   readonly LyricsPreferencesStore preferencesStore;
   readonly bool smokeMode;
+  readonly bool autoLaunchMode;
+  bool userEnabled;
+  bool startupInitialized;
   bool applyingPreferences;
   string configurationNotice = string.Empty;
   string hotkeyNotice = string.Empty;
@@ -64,9 +67,11 @@ namespace AMLyrics {
   [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hwnd, int id, uint modifiers, uint key);
   [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr hwnd, int id);
   static Brush Brush(string hex) { var b = (SolidColorBrush)new BrushConverter().ConvertFromString(hex); b.Freeze(); return b; }
-  public LyricsWindow(IMediaSource media, LocalLyricsProvider local, bool smoke) {
+  public LyricsWindow(IMediaSource media, LocalLyricsProvider local, bool smoke, bool autoLaunch = false, string settingsPath = null) {
    smokeMode = smoke;
-   preferencesStore = new LyricsPreferencesStore();
+   autoLaunchMode = autoLaunch;
+   userEnabled = smoke || !autoLaunch;
+   preferencesStore = new LyricsPreferencesStore(settingsPath);
    this.media = media; this.local = local;
    online = media is TestMediaSource ? null : new LrclibLyricsProvider();
    lyrics = new LyricSession(online == null ? new LyricsProviders(local) : new LyricsProviders(local, online));
@@ -117,7 +122,7 @@ namespace AMLyrics {
     if (overlayChrome.IsLocked || settingsPanel.Visibility == Visibility.Visible || resizing) return;
     dragging = true;
     overlayChrome.SetHovered(false);
-    try { DragMove(); KeepWindowVisible(); } catch (InvalidOperationException) { }
+    try { DragMove(); KeepWindowVisible(); SavePreferences(); } catch (InvalidOperationException) { }
     finally { dragging = false; }
     e.Handled = true;
    };
@@ -136,8 +141,8 @@ namespace AMLyrics {
    Content = contentRoot;
 
    Bind(Key.O, ModifierKeys.Control, () => { var ignored = ImportAsync(); });
-   Bind(Key.Q, ModifierKeys.Control, Close); Bind(Key.Escape, ModifierKeys.None, CloseSettingsOrHide);
-   Bind(Key.H, ModifierKeys.Control, HideWindow); Bind(Key.OemPlus, ModifierKeys.Control, () => ResizeLyrics(2));
+   Bind(Key.Q, ModifierKeys.Control, ShutdownPreservingEnabled); Bind(Key.Escape, ModifierKeys.None, CloseSettingsOrHide);
+   Bind(Key.H, ModifierKeys.Control, () => SetEnabled(false)); Bind(Key.OemPlus, ModifierKeys.Control, () => ResizeLyrics(2));
    Bind(Key.Add, ModifierKeys.Control, () => ResizeLyrics(2)); Bind(Key.OemMinus, ModifierKeys.Control, () => ResizeLyrics(-2));
    Bind(Key.Subtract, ModifierKeys.Control, () => ResizeLyrics(-2));
    Bind(Key.Left, ModifierKeys.Control, () => ChangeTiming(0.2, false));
@@ -146,11 +151,11 @@ namespace AMLyrics {
    if (!smoke) {
     tray = new Forms.NotifyIcon { Text = "Apple Music 桌面歌词 · 双击显示", Icon = System.Drawing.SystemIcons.Application, Visible = true };
     var menu = new Forms.ContextMenuStrip();
-    menu.Items.Add("显示歌词", null, (s,e) => Dispatcher.BeginInvoke(new Action(RestoreWindow)));
+    menu.Items.Add("显示歌词", null, (s,e) => Dispatcher.BeginInvoke(new Action(() => SetEnabled(true))));
     trayLockItem = new Forms.ToolStripMenuItem("锁定歌词（Ctrl+Alt+Shift+L）", null, (s,e) => Dispatcher.BeginInvoke(new Action(() => SetLocked(!overlayChrome.IsLocked))));
     menu.Items.Add(trayLockItem);
-    menu.Items.Add("退出", null, (s,e) => Dispatcher.BeginInvoke(new Action(Close)));
-    tray.ContextMenuStrip = menu; tray.DoubleClick += (s,e) => Dispatcher.BeginInvoke(new Action(RestoreWindow));
+    menu.Items.Add("退出", null, (s,e) => Dispatcher.BeginInvoke(new Action(ShutdownPreservingEnabled)));
+    tray.ContextMenuStrip = menu; tray.DoubleClick += (s,e) => Dispatcher.BeginInvoke(new Action(() => SetEnabled(true)));
    }
    SourceInitialized += (s,e) => {
     handle = new WindowInteropHelper(this).Handle;
@@ -175,15 +180,25 @@ namespace AMLyrics {
    IsVisibleChanged += (s,e) => { if (!IsVisible) overlayChrome.SetHovered(false); };
    SizeChanged += (s,e) => { if (e.HeightChanged) KeepWindowVisible(); };
    Loaded += (s,e) => {
-    if (!(smokeMode && media is TestMediaSource)) LoadStartupPreferences(preferencesStore);
-    ApplyDisplaySettings(); Refresh(); KeepWindowVisible(); timer.Start();
+    InitializeStartupState();
+    ApplyDisplaySettings();
+    KeepWindowVisible();
+    if (ShouldStartVisible) {
+     Refresh();
+     if (!timer.IsEnabled) timer.Start();
+    }
    };
    Closed += (s,e) => {
     SavePreferences();
-    closing = true; timer.Stop(); hitTestBridge.Dispose(); lyrics.Dispose(); if (online != null) online.Dispose(); media.Dispose();
+    closing = true; timer.Stop(); StopMediaPolling(); hitTestBridge.Dispose(); lyrics.Dispose(); if (online != null) online.Dispose(); media.Dispose();
     if (hotkeyRegistered) UnregisterHotKey(handle, 1);
     if (lockHotkeyRegistered) UnregisterHotKey(handle, 2);
     if (tray != null) { tray.Visible = false; tray.ContextMenuStrip.Dispose(); tray.Dispose(); }
+    try {
+     if (Application.Current != null && (Application.Current.MainWindow == null || ReferenceEquals(Application.Current.MainWindow, this))) {
+      Application.Current.Shutdown();
+     }
+    } catch { }
    };
   }
   Border MakeResizeHandle(bool left) {
@@ -211,7 +226,83 @@ namespace AMLyrics {
    if (!resizing) return;
    resizing = false; Mouse.Capture(null); KeepWindowVisible(); SavePreferences(); e.Handled = true;
   }
-  void SetEnabled(bool enabled) { if (enabled) RestoreWindow(); else HideWindow(); SavePreferences(); }
+  internal bool ShouldStartVisible { get { return smokeMode || userEnabled; } }
+  internal void InitializeStartupState() {
+   if (startupInitialized) return;
+   startupInitialized = true;
+   if (!(smokeMode && media is TestMediaSource)) {
+    LoadStartupPreferences(preferencesStore, !autoLaunchMode, false);
+   } else {
+    userEnabled = true;
+   }
+   ApplyDisplaySettings();
+   KeepWindowVisible();
+   if (ShouldStartVisible) {
+    StartMediaPolling(false);
+    Refresh();
+    timer.Start();
+   } else {
+    timer.Stop();
+    StopMediaPolling();
+   }
+  }
+  void StartMediaPolling(bool resetSample) {
+   var lifecycle = media as IMediaSourceLifecycle;
+   if (lifecycle == null) return;
+   if (resetSample) lifecycle.ResetSample();
+   lifecycle.StartPolling();
+  }
+  void StopMediaPolling() {
+   var lifecycle = media as IMediaSourceLifecycle;
+   if (lifecycle != null) lifecycle.StopPolling();
+  }
+  internal void SetEnabled(bool enabled) {
+   userEnabled = enabled;
+   if (enabled) {
+    selectedKey = "";
+    selectedDuration = 0;
+    lyrics.Clear();
+    StartMediaPolling(true);
+    RestoreWindow();
+    timer.Start();
+   } else {
+    HideWindow();
+    timer.Stop();
+    selectedKey = "";
+    selectedDuration = 0;
+    lyrics.Clear();
+    StopMediaPolling();
+   }
+   SavePreferences();
+  }
+  internal void SetLockedFromHost(bool value) { SetLocked(value); }
+  internal void OpenSettingsFromHost() {
+   if (!userEnabled) SetEnabled(true);
+   if (overlayChrome.IsLocked) SetLocked(false);
+   OpenSettings();
+  }
+  internal HostStateSnapshot ReadHostState() {
+   var lifecycle = media as IMediaSourceLifecycle;
+   var sample = media.Read();
+   return new HostStateSnapshot {
+    Enabled = userEnabled,
+    Locked = overlayChrome.IsLocked,
+    Visible = IsVisible,
+    Polling = lifecycle != null ? lifecycle.IsPolling : timer.IsEnabled,
+    ClientAvailable = sample != null && sample.Status == "Connected"
+   };
+  }
+  internal void ShutdownForClientExit() { ShutdownPreservingEnabled(); }
+  internal void ShutdownPreservingEnabled() {
+   if (closing) return;
+   timer.Stop();
+   selectedKey = "";
+   selectedDuration = 0;
+   lyrics.Clear();
+   StopMediaPolling();
+   SavePreferences();
+   Close();
+  }
   void OpenSettings() {
    if (overlayChrome.IsLocked) return;
    overlayChrome.SetHovered(false);
@@ -224,7 +315,7 @@ namespace AMLyrics {
    settingsPanel.Visibility = Visibility.Collapsed;
    hitTestBridge.SetClickThrough(overlayChrome.IsLocked);
   }
-  void CloseSettingsOrHide() { if (settingsPanel.Visibility == Visibility.Visible) CloseSettings(); else HideWindow(); }
+  void CloseSettingsOrHide() { if (settingsPanel.Visibility == Visibility.Visible) CloseSettings(); else SetEnabled(false); }
   void SetLocked(bool value) {
    if (value) CloseSettings();
    overlayChrome.SetLocked(value);
@@ -284,13 +375,14 @@ namespace AMLyrics {
    Left = visible.Left; Top = visible.Top;
    current.AlignInkToTop = visible.Top <= workArea.Top + 0.5;
   }
-  void LoadStartupPreferences(LyricsPreferencesStore store) {
+  internal void LoadStartupPreferences(LyricsPreferencesStore store, bool forceEnable = true, bool applyVisibility = true) {
    var result = store.Load();
    configurationNotice = result.Status == LyricsPreferencesLoadStatus.Loaded || result.Status == LyricsPreferencesLoadStatus.DefaultsUsed ? string.Empty : "设置未加载：" + result.Error;
    var preferences = result.Preferences;
-   preferences.Enabled = true;
+   if (forceEnable) preferences.Enabled = true;
+   userEnabled = preferences.Enabled;
    applyingPreferences = true;
-   try { ApplyPreferencesFromPersistence(preferences); }
+   try { ApplyPreferencesFromPersistence(preferences, applyVisibility); }
    finally { applyingPreferences = false; }
   }
   void SavePreferences() {
@@ -305,15 +397,28 @@ namespace AMLyrics {
    } catch { return string.Empty; }
   }
   internal LyricsWindowPreferences ReadPreferencesForPersistence() {
-   return new LyricsWindowPreferences { Enabled = IsVisible, Locked = overlayChrome.IsLocked, Width = Width, Left = Left, Top = Top, ScreenDeviceName = CurrentScreenDeviceName(), Display = displaySettings.Clone(), TimingOffsets = timing.ReadOffsets() };
+   return new LyricsWindowPreferences { Enabled = userEnabled, Locked = overlayChrome.IsLocked, Width = Width, Left = Left, Top = Top, ScreenDeviceName = CurrentScreenDeviceName(), Display = displaySettings.Clone(), TimingOffsets = timing.ReadOffsets() };
   }
-  internal void ApplyPreferencesFromPersistence(LyricsWindowPreferences preferences) {
+  internal void ApplyPreferencesFromPersistence(LyricsWindowPreferences preferences, bool applyVisibility = true) {
    if (preferences == null) return;
    var copy = preferences.Clone(); copy.Normalize();
+   userEnabled = copy.Enabled;
    timing.LoadOffsets(copy.TimingOffsets);
-   Width = copy.Width; if (!double.IsNaN(copy.Left)) Left = copy.Left; if (!double.IsNaN(copy.Top)) Top = copy.Top;
+   Width = copy.Width;
+   bool hasLeft = !double.IsNaN(copy.Left);
+   bool hasTop = !double.IsNaN(copy.Top);
+   if (hasLeft || hasTop) {
+    WindowStartupLocation = WindowStartupLocation.Manual;
+    if (hasLeft) Left = copy.Left;
+    if (hasTop) Top = copy.Top;
+   } else {
+    WindowStartupLocation = WindowStartupLocation.CenterScreen;
+   }
    CopyDisplaySettings(copy.Display, displaySettings);
-   ApplyDisplaySettings(); SetLocked(copy.Locked); KeepWindowVisible(); if (copy.Enabled) RestoreWindow(); else HideWindow();
+   ApplyDisplaySettings(); SetLocked(copy.Locked); KeepWindowVisible();
+   if (applyVisibility) {
+    if (copy.Enabled) RestoreWindow(); else HideWindow();
+   }
   }
   static void CopyDisplaySettings(LyricsDisplaySettings source, LyricsDisplaySettings target) {
    target.FontSize = source.FontSize;
@@ -331,7 +436,7 @@ namespace AMLyrics {
    InputBindings.Add(new KeyBinding(command, new KeyGesture(key, mods)));
   }
   IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wparam, IntPtr lparam, ref bool handled) {
-   if (msg == 0x0312 && wparam.ToInt32() == 1) { RestoreWindow(); handled = true; }
+   if (msg == 0x0312 && wparam.ToInt32() == 1) { SetEnabled(true); handled = true; }
    else if (msg == 0x0312 && wparam.ToInt32() == 2) { SetLocked(!overlayChrome.IsLocked); handled = true; }
    return IntPtr.Zero;
   }

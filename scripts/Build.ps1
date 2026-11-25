@@ -16,10 +16,11 @@ foreach ($reference in $references) {
  $arguments += '/reference:' + $path
 }
 $sources = @(
- 'Contracts.cs', 'DesktopPlacement.cs', 'LiveVerification.cs', 'LrclibLyrics.cs',
+ 'Contracts.cs', 'DesktopPlacement.cs', 'HostIpc.cs', 'LiveVerification.cs', 'LrclibLyrics.cs',
  'Lyrics.cs', 'LyricsHitTestBridge.cs', 'LyricsLayout.cs', 'LyricsOverlayChrome.cs',
  'LyricsOverlayHover.cs', 'LyricsPreferencesStore.cs', 'LyricsSettingsPanel.cs',
- 'LyricsUiContracts.cs', 'LyricsWindow.cs', 'MediaSource.cs', 'Program.cs', 'WindowBehavior.cs'
+ 'LyricsUiContracts.cs', 'LyricsWindow.cs', 'MediaSource.cs', 'ProcessJobGuard.cs',
+ 'Program.cs', 'WindowBehavior.cs'
 )
 foreach ($source in $sources) {
  $sourcePath = Join-Path (Join-Path $root 'src') $source
@@ -28,5 +29,28 @@ foreach ($source in $sources) {
 }
 & $compiler @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Application compilation failed.' }
+
+$watchArguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/warn:4','/utf8output',('/out:' + (Join-Path $OutputDirectory 'AppleMusicLyricsWatch.exe')))
+foreach ($reference in @('System.dll','System.Core.dll')) {
+ $watchArguments += '/reference:' + (Join-Path $framework $reference)
+}
+foreach ($source in @('HostIpc.cs', 'AppleMusicMonitor.cs', 'StandbyWatcher.cs')) {
+ $sourcePath = Join-Path (Join-Path $root 'src') $source
+ if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { throw "Missing watcher source file: $sourcePath" }
+ $watchArguments += $sourcePath
+}
+& $compiler @watchArguments
+if ($LASTEXITCODE -ne 0) { throw 'Standby watcher compilation failed.' }
+
+$launcherSource = Join-Path (Join-Path $root 'src') 'StandbyLauncher.cs'
+if (-not (Test-Path -LiteralPath $launcherSource -PathType Leaf)) { throw "Missing launcher source file: $launcherSource" }
+$launcherArguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/warn:4','/utf8output',('/out:' + (Join-Path $OutputDirectory 'AppleMusicLyricsStandby.exe')))
+foreach ($reference in @('System.dll','System.Core.dll')) {
+ $launcherArguments += '/reference:' + (Join-Path $framework $reference)
+}
+$launcherArguments += $launcherSource
+& $compiler @launcherArguments
+if ($LASTEXITCODE -ne 0) { throw 'Standby launcher compilation failed.' }
+
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'MediaSession.ps1') -Destination (Join-Path $OutputDirectory 'MediaSession.ps1') -ErrorAction Stop
 Write-Output $OutputDirectory

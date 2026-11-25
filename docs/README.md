@@ -11,6 +11,16 @@ Windows 原生置顶歌词窗口，使用系统媒体会话读取 Apple Music �
 
 也可以直接打开 outputs 最新 build-* 目录中的 AppleMusicLyrics.exe。同目录的 MediaSession.ps1 必须保留。构建目录是独立版本，构建不会覆盖旧版本。
 
+## 随 Apple Music 自动待命与启停（可选）
+
+每个新构建目录下还会生成纯原生待命守望程序 `AppleMusicLyricsWatch.exe` 与无黑框启动器 `AppleMusicLyricsStandby.exe`：
+
+- 临时启动待命守望：`.\scripts\StartStandby.ps1`（发现 Apple Music 运行时按上次记忆状态拉起浮层；上次开启则立刻显示，上次关闭则仅保留托盘与快捷键；Apple Music 完全退出后自动收起歌词窗口并停止采集，同时保留原有开关记忆）。
+- 管理或预览开机登录自启（不会在未确认前自动写入系统启动项）：
+  - `.\scripts\ManageStandby.ps1 -Action Status`：查看当前待命状态与自启安装情况。
+  - `.\scripts\ManageStandby.ps1 -Action PreviewInstall`：只读预览将写入的自启路径（指向原生 `AppleMusicLyricsStandby.exe`，不拉起 PowerShell）与撤销命令。
+  - `.\scripts\ManageStandby.ps1 -Action Install` / `-Action Uninstall`：启用或彻底撤销登录自启并停止待命守望。
+
 ## 操作
 
 | 操作 | 方法 |

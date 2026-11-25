@@ -7,14 +7,54 @@ using System.Text;
 using System.Web.Script.Serialization;
 
 namespace AMLyrics {
- public sealed class WindowsMediaSource : IMediaSource {
+ public sealed class WindowsMediaSource : IMediaSource, IMediaSourceLifecycle {
   readonly object gate = new object();
   readonly string script;
+  readonly ProcessJobGuard jobGuard = new ProcessJobGuard();
   Process worker;
   MediaSample latest = new MediaSample();
   DateTime started;
+  bool polling;
   bool disposed;
-  public WindowsMediaSource(string script) { this.script = script; Start(); }
+
+  public WindowsMediaSource(string script) : this(script, true) {}
+
+  public WindowsMediaSource(string script, bool startImmediately) {
+   this.script = script;
+   if (startImmediately) StartPolling();
+  }
+
+  public bool IsPolling {
+   get {
+    lock (gate) return polling && !disposed;
+   }
+  }
+
+  public void StartPolling() {
+   lock (gate) {
+    if (disposed || polling) return;
+    polling = true;
+    if (worker == null || HasExitedSafe(worker)) {
+     Stop();
+     Start();
+    }
+   }
+  }
+
+  public void StopPolling() {
+   lock (gate) {
+    polling = false;
+    Stop();
+    latest = new MediaSample();
+   }
+  }
+
+  public void ResetSample() {
+   lock (gate) {
+    latest = new MediaSample();
+   }
+  }
+
   void Start() {
    started = DateTime.UtcNow;
    try {
@@ -28,11 +68,13 @@ namespace AMLyrics {
     process.OutputDataReceived += (s,e) => { if (e.Data != null) Accept(process, e.Data); };
     process.ErrorDataReceived += (s,e) => {
      if (!string.IsNullOrWhiteSpace(e.Data)) lock (gate) {
-      if (worker == process && !disposed) latest = new MediaSample { Status = "Error", Message = "媒体读取失败：" + e.Data };
+      if (worker == process && polling && !disposed) latest = new MediaSample { Status = "Error", Message = "媒体读取失败：" + e.Data };
      }
     };
     worker = process;
-    process.Start(); process.BeginOutputReadLine(); process.BeginErrorReadLine();
+    process.Start();
+    jobGuard.TryAssign(process);
+    process.BeginOutputReadLine(); process.BeginErrorReadLine();
    } catch (Exception ex) {
     var failed = worker; worker = null;
     if (failed != null) failed.Dispose();
@@ -62,19 +104,22 @@ namespace AMLyrics {
       sample.Track = null; sample.Status = "Waiting"; sample.Message = "等待 Apple Music 播放歌曲";
      }
     }
-    lock (gate) if (!disposed && worker == process) latest = sample;
+    lock (gate) if (!disposed && polling && worker == process) latest = sample;
    } catch (Exception ex) {
-    lock (gate) if (!disposed && worker == process) latest = new MediaSample { Status = "Error", Message = "媒体数据无法解析：" + ex.Message };
+    lock (gate) if (!disposed && polling && worker == process) latest = new MediaSample { Status = "Error", Message = "媒体数据无法解析：" + ex.Message };
    }
   }
   public MediaSample Read() {
    lock (gate) {
-    if (!disposed && (DateTime.UtcNow - started).TotalSeconds > 12 &&
-        (worker == null || worker.HasExited || (DateTime.UtcNow - latest.ReceivedAtUtc).TotalSeconds > 12)) {
+    if (polling && !disposed && (DateTime.UtcNow - started).TotalSeconds > 12 &&
+        (worker == null || HasExitedSafe(worker) || (DateTime.UtcNow - latest.ReceivedAtUtc).TotalSeconds > 12)) {
      Stop(); Start();
     }
     return latest;
    }
+  }
+  static bool HasExitedSafe(Process process) {
+   try { return process.HasExited; } catch { return true; }
   }
   void Stop() {
    var process = worker; worker = null;
@@ -82,6 +127,13 @@ namespace AMLyrics {
    try { if (!process.HasExited) process.Kill(); } catch (InvalidOperationException) {} catch (System.ComponentModel.Win32Exception) {}
    process.Dispose();
   }
-  public void Dispose() { lock (gate) { disposed = true; Stop(); } }
+  public void Dispose() {
+   lock (gate) {
+    disposed = true;
+    polling = false;
+    Stop();
+    jobGuard.Dispose();
+   }
+  }
  }
 }

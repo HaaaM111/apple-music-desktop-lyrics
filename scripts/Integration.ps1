@@ -6,7 +6,7 @@ $null = New-Item -ItemType Directory -Path $folder
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $framework = Split-Path -Parent $compiler
 $exe = Join-Path $folder 'MediaIntegration.exe'
-& $compiler /nologo /target:exe /platform:x64 /utf8output ('/reference:' + (Join-Path $framework 'System.Web.Extensions.dll')) ('/out:' + $exe) (Join-Path $root 'src\Contracts.cs') (Join-Path $root 'src\Lyrics.cs') (Join-Path $root 'src\MediaSource.cs') (Join-Path $root 'tests\MediaIntegration.cs')
+& $compiler /nologo /target:exe /platform:x64 /utf8output ('/reference:' + (Join-Path $framework 'System.Web.Extensions.dll')) ('/out:' + $exe) (Join-Path $root 'src\Contracts.cs') (Join-Path $root 'src\Lyrics.cs') (Join-Path $root 'src\ProcessJobGuard.cs') (Join-Path $root 'src\MediaSource.cs') (Join-Path $root 'tests\MediaIntegration.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Integration test compilation failed.' }
 $log = & $exe (Join-Path $BuildDirectory 'MediaSession.ps1')
 $code = $LASTEXITCODE

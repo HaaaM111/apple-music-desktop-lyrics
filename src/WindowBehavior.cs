@@ -382,12 +382,77 @@ namespace AMLyrics {
     "Window: manual startup preserves stroke, opacity and appearance switches");
    check(!startupStore.Current.Enabled && File.Exists(startupSettingsPath) && originalSettings.SequenceEqual(File.ReadAllBytes(startupSettingsPath)),
     "Window: manual startup leaves the source preferences unchanged and disabled");
+
+   SetEnabled(false);
+   check(!IsVisible && !fake.IsPolling && !timer.IsEnabled && fake.StopCount >= 1 && lyrics.Read().Document == null && !ReadPreferencesForPersistence().Enabled,
+    "Window: SetEnabled(false) hides overlay, stops media polling, and clears cached lyrics");
+   fake.Sample = TestMediaSource.Connected("切歌后旧歌词不可闪回", 15);
+   int resetsBeforeEnable = fake.ResetCount;
+   SetEnabled(true);
+   check(IsVisible && fake.IsPolling && timer.IsEnabled && fake.ResetCount > resetsBeforeEnable &&
+    ReadPreferencesForPersistence().Enabled && current.Text == "等待 Apple Music",
+    "Window: SetEnabled(true) resets stale sample, restarts polling, and shows overlay without stale track flash");
+
+   LoadStartupPreferences(startupStore, false, true);
+   if (userEnabled) StartMediaPolling(false); else { timer.Stop(); StopMediaPolling(); }
+   var autoHiddenState = ReadHostState();
+   check(!autoHiddenState.Enabled && !autoHiddenState.Visible && !autoHiddenState.Polling,
+    "Window: auto-launch keeps overlay hidden and polling stopped when Enabled=false");
+
+   var autoEnabledPrefs = LyricsPreferencesStore.CreateDefaultPreferences();
+   autoEnabledPrefs.Enabled = true;
+   string autoEnabledPath = Path.Combine(folder, "auto-enabled-" + Guid.NewGuid().ToString("N"), "settings.json");
+   var autoEnabledStore = new LyricsPreferencesStore(autoEnabledPath);
+   check(autoEnabledStore.Save(autoEnabledPrefs).Succeeded, "Window: save isolated auto-launch Enabled=true preferences");
+   LoadStartupPreferences(autoEnabledStore, false, true);
+   if (userEnabled) { StartMediaPolling(false); timer.Start(); } else { timer.Stop(); StopMediaPolling(); }
+   var autoVisibleState = ReadHostState();
+   check(autoVisibleState.Enabled && autoVisibleState.Visible && autoVisibleState.Polling,
+    "Window: auto-launch immediately shows overlay and starts polling when Enabled=true");
+   StopMediaPolling();
+   HideWindow();
+   check(ReadPreferencesForPersistence().Enabled && !IsVisible && !fake.IsPolling,
+    "Window: client-exit cleanup preserves Enabled=true while stopping polling");
+
+   Rect workArea = SystemParameters.WorkArea;
+   double expectedLeft = Math.Round(workArea.Left + 123);
+   double expectedTop = Math.Round(workArea.Top);
+   var positionedPrefs = LyricsPreferencesStore.CreateDefaultPreferences();
+   positionedPrefs.Enabled = true;
+   positionedPrefs.Left = expectedLeft;
+   positionedPrefs.Top = expectedTop;
+   string positionedPath = Path.Combine(folder, "positioned-" + Guid.NewGuid().ToString("N"), "settings.json");
+   var positionedStore = new LyricsPreferencesStore(positionedPath);
+   check(positionedStore.Save(positionedPrefs).Succeeded, "Window: save isolated non-center window position");
+   var positioned = new LyricsWindow(new TestMediaSource(), new LocalLyricsProvider(), true, false, positionedPath) {
+    ShowActivated = false,
+    ShowInTaskbar = false
+   };
+   try {
+    positioned.LoadStartupPreferences(new LyricsPreferencesStore(positionedPath), true, false);
+    positioned.Show();
+    positioned.UpdateLayout();
+    check(positioned.WindowStartupLocation == WindowStartupLocation.Manual &&
+     Math.Abs(positioned.Left - expectedLeft) <= 1.0 &&
+     Math.Abs(positioned.Top - expectedTop) <= 1.0 &&
+     positioned.current.AlignInkToTop,
+     "Window: initial Show() restores saved non-center Left/Top without reverting to CenterScreen");
+   } finally {
+    positioned.Close();
+   }
   }
  }
- public sealed class TestMediaSource : IMediaSource {
+ public sealed class TestMediaSource : IMediaSource, IMediaSourceLifecycle {
   public MediaSample Sample = new MediaSample();
+  public bool IsPolling { get; private set; }
+  public int StartCount { get; private set; }
+  public int StopCount { get; private set; }
+  public int ResetCount { get; private set; }
+  public void StartPolling() { IsPolling = true; StartCount++; }
+  public void StopPolling() { IsPolling = false; StopCount++; Sample = new MediaSample(); }
+  public void ResetSample() { ResetCount++; Sample = new MediaSample(); }
   public MediaSample Read() { return Sample; }
-  public void Dispose() {}
+  public void Dispose() { StopPolling(); }
   public static MediaSample Connected(string title, double position) {
    return new MediaSample { Status = "Connected", TimelineReliable = true, Track = new TrackSnapshot {
     SourceAppId = "AppleMusic.Test", IsAppleMusic = true, Title = title, Artist = "测试数据", PositionSeconds = position,

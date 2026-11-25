@@ -17,6 +17,12 @@ namespace AMLyrics {
   public DateTime ReceivedAtUtc = DateTime.UtcNow;
  }
  public interface IMediaSource : IDisposable { MediaSample Read(); }
+ public interface IMediaSourceLifecycle {
+  bool IsPolling { get; }
+  void StartPolling();
+  void StopPolling();
+  void ResetSample();
+ }
  public static class PlaybackMath {
   public static bool IsFresh(MediaSample sample, DateTime now) {
    return sample != null && (now - sample.ReceivedAtUtc).TotalSeconds <= 3 && (now - sample.ReceivedAtUtc).TotalSeconds >= -1;
