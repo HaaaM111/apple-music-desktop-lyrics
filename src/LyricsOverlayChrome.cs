@@ -10,13 +10,6 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 
 namespace AMLyrics {
- public enum LyricsPlaybackCommand { Previous, PlayPause, Next }
-
- public sealed class LyricsPlaybackCommandEventArgs : EventArgs {
-  public LyricsPlaybackCommand Command { get; private set; }
-  public LyricsPlaybackCommandEventArgs(LyricsPlaybackCommand command) { Command = command; }
- }
-
  public sealed class LyricsLinePresenter : Grid {
   readonly TranslateTransform shift = new TranslateTransform();
   string text = "";
@@ -165,16 +158,13 @@ namespace AMLyrics {
   readonly Popup toolbarPopup;
   readonly Grid toolbarSurface;
   readonly StackPanel buttonPanel;
-  readonly Button sourceButton;
-  readonly Button timingButton;
   readonly Button settingsButton;
   readonly Button lockButton;
   readonly Button closeButton;
-   readonly Button unlockButton;
-   readonly List<Button> interactiveButtons = new List<Button>();
+  readonly Button unlockButton;
+  readonly List<Button> interactiveButtons = new List<Button>();
   bool locked;
   bool hovered;
-  bool interactionEnabled = true;
 
   public LyricsOverlayChrome() {
    Background = Brushes.Transparent;
@@ -195,23 +185,20 @@ namespace AMLyrics {
     HorizontalAlignment = HorizontalAlignment.Center,
     VerticalAlignment = VerticalAlignment.Top
    };
-   sourceButton = MakeButton("源", "打开歌词来源与状态", delegate { RaiseEvent(SourceRequested); });
-   timingButton = MakeButton("校", "打开歌词校时", delegate { RaiseEvent(TimingRequested); });
-   lockButton = MakeButton("锁", "锁定歌词位置和尺寸", delegate { RaiseEvent(ToggleLockRequested); });
-    settingsButton = MakeButton("⚙", "打开歌词设置", delegate { RaiseEvent(SettingsRequested); });
+   settingsButton = MakeButton("⚙", "打开歌词设置", delegate { RaiseEvent(SettingsRequested); });
+   lockButton = MakeButton("🔒", "锁定歌词位置和尺寸", delegate { RaiseEvent(ToggleLockRequested); });
+   lockButton.FontFamily = new FontFamily("Segoe UI Emoji, Segoe UI Symbol, Segoe UI");
    closeButton = MakeButton("×", "关闭歌词显示", delegate { RaiseEvent(CloseRequested); });
-    buttonPanel.Children.Add(sourceButton); buttonPanel.Children.Add(timingButton);
-    buttonPanel.Children.Add(lockButton); buttonPanel.Children.Add(settingsButton);
+    buttonPanel.Children.Add(settingsButton);
+    buttonPanel.Children.Add(lockButton);
     buttonPanel.Children.Add(closeButton);
-    interactiveButtons.Add(sourceButton); interactiveButtons.Add(timingButton);
-    interactiveButtons.Add(lockButton); interactiveButtons.Add(settingsButton);
+    interactiveButtons.Add(settingsButton);
+    interactiveButtons.Add(lockButton);
     interactiveButtons.Add(closeButton);
-    unlockButton = MakeButton("解锁", "解锁歌词位置和尺寸", delegate { RaiseEvent(ToggleLockRequested); });
-    unlockButton.Width = 86;
-    unlockButton.Height = 32;
+    unlockButton = MakeButton("🔓", "解锁歌词位置和尺寸", delegate { RaiseEvent(ToggleLockRequested); });
+    unlockButton.FontFamily = new FontFamily("Segoe UI Emoji, Segoe UI Symbol, Segoe UI");
     unlockButton.HorizontalAlignment = HorizontalAlignment.Center;
     unlockButton.VerticalAlignment = VerticalAlignment.Top;
-    unlockButton.Margin = new Thickness(0, 2, 0, 0);
     unlockButton.IsEnabled = false;
     toolbarSurface = new Grid { Background = Brushes.Transparent };
     toolbarSurface.Children.Add(buttonPanel);
@@ -233,18 +220,11 @@ namespace AMLyrics {
    public event EventHandler SettingsRequested;
    public event EventHandler ToggleLockRequested;
    public event EventHandler CloseRequested;
-   public event EventHandler SourceRequested;
-   public event EventHandler TimingRequested;
-   public event EventHandler LockStateChanged;
-   internal event EventHandler<LyricsPlaybackCommandEventArgs> PlaybackRequested;
    public bool IsLocked { get { return locked; } }
    public StackPanel Toolbar { get { return buttonPanel; } }
    public Border Frame { get { return frame; } }
-   public Button SourceButton { get { return sourceButton; } }
-   public Button TimingButton { get { return timingButton; } }
    public Button SettingsButton { get { return settingsButton; } }
    public Button LockButton { get { return lockButton; } }
-   public Button CloseButton { get { return closeButton; } }
    public Button UnlockButton { get { return unlockButton; } }
    internal FrameworkElement HoverToolbarSurface { get { return toolbarSurface; } }
 
@@ -265,21 +245,10 @@ namespace AMLyrics {
     byte alpha = (byte)Math.Round(158 + (255 - 158) * opacity);
     frame.Background = new SolidColorBrush(Color.FromArgb(alpha, 10, 11, 15));
    }
-   public void SetPlaying(bool value) { }
-   public void SetInteractionEnabled(bool value) {
-    interactionEnabled = value;
-    UpdateButtonStates();
-   }
-   public void SetPlaybackAvailable(bool value) { }
    public void SetLocked(bool value) {
-    bool changed = locked != value;
     locked = value;
-    lockButton.Content = locked ? "解" : "锁";
-    AutomationProperties.SetName(lockButton, locked ? "解锁歌词位置和尺寸" : "锁定歌词位置和尺寸");
-    lockButton.ToolTip = locked ? "解锁歌词位置和尺寸" : "锁定歌词位置和尺寸";
     UpdateButtonStates();
     UpdateVisibility();
-    if (changed) RaiseEvent(LockStateChanged);
    }
    void UpdateVisibility() {
     frame.Visibility = buttonPanel.Visibility = hovered && !locked ? Visibility.Visible : Visibility.Collapsed;
@@ -295,7 +264,7 @@ namespace AMLyrics {
    AutomationProperties.SetName(button, name);
    button.Click += (s, e) => {
     bool unlock = button == unlockButton;
-    if (hovered && (unlock || (!locked && interactionEnabled)) && button.IsEnabled && action != null) action();
+    if (hovered && (unlock || !locked) && button.IsEnabled && action != null) action();
    };
    return button;
   }
@@ -346,11 +315,8 @@ namespace AMLyrics {
   }
 
   void UpdateButtonStates() {
-   for (int i = 0; i < interactiveButtons.Count; i++) interactiveButtons[i].IsEnabled = !locked && interactionEnabled;
+   for (int i = 0; i < interactiveButtons.Count; i++) interactiveButtons[i].IsEnabled = !locked;
    if (unlockButton != null) unlockButton.IsEnabled = locked;
-  }
-  void RaisePlayback(LyricsPlaybackCommand command) {
-   var handler = PlaybackRequested; if (handler != null) handler(this, new LyricsPlaybackCommandEventArgs(command));
   }
   void RaiseEvent(EventHandler handler) { if (handler != null) handler(this, EventArgs.Empty); }
  }

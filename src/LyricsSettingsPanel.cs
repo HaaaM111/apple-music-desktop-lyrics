@@ -4,42 +4,12 @@ using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Data;
 using System.Windows.Interop;
 using System.Windows.Media;
 using DrawingColor = System.Drawing.Color;
 using Forms = System.Windows.Forms;
 
 namespace AMLyrics {
- public sealed class LyricsAppearanceState {
-  public double FontSize = LyricsLayoutMetrics.DefaultFontSize;
-  public string FontFamilyName = "Segoe UI";
-  public string FontWeightName = "常规";
-  public string ForegroundHex = "#FFF7FA";
-  public string StrokeHex = "#0F0F12";
-  public double BackgroundOpacity;
-  public bool StrokeEnabled = true;
-  public bool ShadowEnabled = true;
-  public bool AnimateLongLines = true;
-
-  public LyricsAppearanceState Clone() {
-   return new LyricsAppearanceState {
-    FontSize = FontSize, FontFamilyName = FontFamilyName, FontWeightName = FontWeightName,
-    ForegroundHex = ForegroundHex, StrokeHex = StrokeHex, BackgroundOpacity = BackgroundOpacity,
-    StrokeEnabled = StrokeEnabled, ShadowEnabled = ShadowEnabled, AnimateLongLines = AnimateLongLines
-   };
-  }
-
-  public void Normalize() {
-   FontSize = LyricsLayoutMetrics.ClampFontSize(FontSize);
-   if (string.IsNullOrWhiteSpace(FontFamilyName)) FontFamilyName = "Segoe UI";
-   if (string.IsNullOrWhiteSpace(FontWeightName)) FontWeightName = "常规";
-   if (string.IsNullOrWhiteSpace(ForegroundHex)) ForegroundHex = "#FFF7FA";
-   if (string.IsNullOrWhiteSpace(StrokeHex)) StrokeHex = "#0F0F12";
-   BackgroundOpacity = Math.Max(0, Math.Min(1, BackgroundOpacity));
-  }
- }
-
  public sealed class LyricsSettingsPanel : Border {
   sealed class ColorField {
    internal TextBox Box;
@@ -73,6 +43,7 @@ namespace AMLyrics {
   readonly TextBlock detailText;
   readonly Button retryButton;
   readonly Button importButton;
+  readonly TextBlock timingStatusText;
   readonly Button earlierButton;
   readonly Button laterButton;
   readonly Button resetTimingButton;
@@ -161,9 +132,18 @@ namespace AMLyrics {
    translationButton = MakeButton("翻译（暂不可用）", "翻译歌词（暂不可用，没有可用回调）", null);
    romanizationButton = MakeButton("音译（暂不可用）", "音译歌词（暂不可用，没有可用回调）", null);
    translationButton.IsEnabled = false; romanizationButton.IsEnabled = false;
+   // Reserved placeholders for future translation/romanization support; hidden from current settings UI.
+   translationButton.Visibility = Visibility.Collapsed; romanizationButton.Visibility = Visibility.Collapsed;
    lyricsGroup.Children.Add(translationButton); lyricsGroup.Children.Add(romanizationButton);
 
    syncGroup = AddGroup("同步");
+   timingStatusText = new TextBlock {
+    Text = "当前歌曲校时：默认（提前 1.5 秒）",
+    Foreground = new SolidColorBrush(Color.FromRgb(88, 91, 101)),
+    TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8)
+   };
+   AutomationProperties.SetName(timingStatusText, "当前歌曲校时状态");
+   syncGroup.Children.Add(timingStatusText);
    earlierButton = MakeButton("提前 0.2 秒", "歌词提前 0.2 秒", delegate { if (adjustTiming != null) adjustTiming(0.2); });
    laterButton = MakeButton("延后 0.2 秒", "歌词延后 0.2 秒", delegate { if (adjustTiming != null) adjustTiming(-0.2); });
    resetTimingButton = MakeButton("恢复默认", "恢复默认提前 1.5 秒", delegate { if (resetTiming != null) resetTiming(); });
@@ -183,25 +163,16 @@ namespace AMLyrics {
   }
 
   public event EventHandler DismissRequested;
-  public event EventHandler SettingsChanged;
   public event EventHandler AppearanceChanged;
   public bool CanImport { get { return importButton.IsEnabled; } }
-  public bool CanRetry { get { return retryButton.IsEnabled; } }
-  public bool CanAdjustTiming { get { return earlierButton.IsEnabled; } }
-  public LyricsAppearanceState Appearance { get { return ReadAppearance(); } }
+  public string TimingStatusText { get { return timingStatusText.Text; } }
+  public string DetailText { get { return detailText.Text; } }
+  internal bool AreReservedLanguageButtonsHidden { get { return translationButton.Visibility == Visibility.Collapsed && romanizationButton.Visibility == Visibility.Collapsed; } }
   public TextBox ForegroundColorBox { get { return foregroundColor.Box; } }
   public TextBox StrokeColorBox { get { return strokeColor.Box; } }
 
-  public LyricsDisplaySettings ReadSettings() {
-   LyricsAppearanceState appearance = ReadAppearance();
-   return new LyricsDisplaySettings {
-    FontSize = appearance.FontSize, ForegroundHex = appearance.ForegroundHex, BackgroundOpacity = appearance.BackgroundOpacity,
-    AnimateLongLines = appearance.AnimateLongLines, StrokeEnabled = appearance.StrokeEnabled, ShadowEnabled = appearance.ShadowEnabled
-   };
-  }
-
-  public LyricsAppearanceState ReadAppearance() {
-   LyricsAppearanceState result = new LyricsAppearanceState {
+  public LyricsDisplaySettings ReadAppearance() {
+   LyricsDisplaySettings result = new LyricsDisplaySettings {
     FontSize = fontSizeSlider.Value,
     FontFamilyName = fontFamilyCombo.SelectedItem as string,
     FontWeightName = fontWeightCombo.SelectedItem as string,
@@ -215,21 +186,18 @@ namespace AMLyrics {
    result.Normalize(); return result;
   }
 
-  public void Apply(LyricsDisplaySettings settings, string source, string detail, bool canRetry, bool canImport, bool canAdjustTiming) {
+  public void Apply(LyricsDisplaySettings settings, string source, string detail, string timingSummary, bool canRetry, bool canImport, bool canAdjustTiming) {
    settings = settings == null ? new LyricsDisplaySettings() : settings.Clone(); settings.Normalize();
-   if (!colorDialogOpen && !IsKeyboardFocusWithin && !surface.IsKeyboardFocusWithin) ApplyAppearance(new LyricsAppearanceState {
-    FontSize = settings.FontSize, ForegroundHex = settings.ForegroundHex, FontFamilyName = settings.FontFamilyName,
-    FontWeightName = settings.FontWeightName, StrokeHex = settings.StrokeHex, BackgroundOpacity = settings.BackgroundOpacity,
-    StrokeEnabled = settings.StrokeEnabled, ShadowEnabled = settings.ShadowEnabled, AnimateLongLines = settings.AnimateLongLines
-   });
+   if (!colorDialogOpen && !IsKeyboardFocusWithin && !surface.IsKeyboardFocusWithin) ApplyAppearance(settings);
    sourceText.Text = string.IsNullOrWhiteSpace(source) ? "歌词来源：未选择" : "歌词来源：" + source;
    detailText.Text = string.IsNullOrWhiteSpace(detail) ? "状态：暂无详细信息" : detail;
+   timingStatusText.Text = string.IsNullOrWhiteSpace(timingSummary) ? "当前歌曲校时：默认（提前 1.5 秒）" : "当前歌曲校时：" + timingSummary;
    retryButton.IsEnabled = canRetry; importButton.IsEnabled = canImport;
    earlierButton.IsEnabled = canAdjustTiming; laterButton.IsEnabled = canAdjustTiming; resetTimingButton.IsEnabled = canAdjustTiming;
   }
 
-  public void ApplyAppearance(LyricsAppearanceState appearance) {
-   appearance = appearance == null ? new LyricsAppearanceState() : appearance.Clone(); appearance.Normalize();
+  public void ApplyAppearance(LyricsDisplaySettings appearance) {
+   appearance = appearance == null ? new LyricsDisplaySettings() : appearance.Clone(); appearance.Normalize();
    applyingAppearance = true;
    try {
     fontSizeSlider.Value = appearance.FontSize; opacitySlider.Value = appearance.BackgroundOpacity;
@@ -244,18 +212,7 @@ namespace AMLyrics {
    } finally { applyingAppearance = false; }
   }
 
-  public void RaiseSettingsChanged() { RaiseAppearanceChanged(); }
   public void FocusFirstControl() { fontSizeSlider.Focus(); }
-  public void FocusSection(string section) {
-   string target = string.Equals(section, "歌词", StringComparison.OrdinalIgnoreCase) ? "歌词" :
-    (string.Equals(section, "同步", StringComparison.OrdinalIgnoreCase) ? "同步" : "显示");
-   for (int i = 0; i < sectionTabs.Items.Count; i++) {
-    TabItem item = sectionTabs.Items[i] as TabItem;
-    if (item != null && string.Equals(item.Header as string, target, StringComparison.OrdinalIgnoreCase)) {
-     sectionTabs.SelectedIndex = i; return;
-    }
-   }
-  }
 
   StackPanel AddGroup(string title) {
    StackPanel group = new StackPanel { Margin = new Thickness(0, 0, 0, 10) };
@@ -561,7 +518,6 @@ namespace AMLyrics {
   void RaiseAppearanceChanged() {
    if (applyingAppearance) return;
    var appearanceHandler = AppearanceChanged; if (appearanceHandler != null) appearanceHandler(this, EventArgs.Empty);
-   var settingsHandler = SettingsChanged; if (settingsHandler != null) settingsHandler(this, EventArgs.Empty);
   }
   void RaiseEvent(EventHandler handler) { if (handler != null) handler(this, EventArgs.Empty); }
   static void SelectItem(ComboBox combo, string value) { if (combo.Items.Contains(value)) combo.SelectedItem = value; }

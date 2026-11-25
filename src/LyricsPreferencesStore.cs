@@ -53,7 +53,6 @@ namespace AMLyrics {
   public const string DefaultRelativePath = "work\\state\\settings.json";
 
   readonly JavaScriptSerializer serializer = new JavaScriptSerializer();
-  readonly string projectRoot;
   string loadError;
 
   public string FilePath { get; private set; }
@@ -65,7 +64,7 @@ namespace AMLyrics {
   public LyricsPreferencesStore(string filePath) {
    if (String.IsNullOrWhiteSpace(filePath)) {
     string baseDirectory = AppDomain.CurrentDomain.BaseDirectory;
-    projectRoot = FindProjectRoot(baseDirectory);
+    string projectRoot = FindProjectRoot(baseDirectory);
     filePath = Path.Combine(projectRoot ?? baseDirectory, DefaultRelativePath);
    }
    FilePath = Path.GetFullPath(filePath);
@@ -82,11 +81,6 @@ namespace AMLyrics {
 
    try {
     PersistedPreferences persisted = ReadIfPresent(FilePath);
-    if (persisted == null && projectRoot != null) {
-     string legacyPath = FindLegacySettings();
-     if (legacyPath != null) persisted = ReadIfPresent(legacyPath);
-    }
-
     Current = persisted == null ? defaults : FromPersisted(persisted);
     LastLoadStatus = persisted == null ? LyricsPreferencesLoadStatus.DefaultsUsed : LyricsPreferencesLoadStatus.Loaded;
     return new LyricsPreferencesLoadResult(Current.Clone(), LastLoadStatus, null);
@@ -179,23 +173,6 @@ namespace AMLyrics {
      Directory.Exists(Path.Combine(candidate, "scripts")) && Directory.Exists(Path.Combine(candidate, "outputs"))) return candidate;
    }
    return null;
-  }
-
-  string FindLegacySettings() {
-   string preview = Path.Combine(projectRoot, @"outputs\build-lyrics-top-edge-20261119-02\preview", DefaultRelativePath);
-   string overlayFix = Path.Combine(projectRoot, @"outputs\build-overlay-fix-20261119-01", DefaultRelativePath);
-   DateTime? previewTime = ReadLastWriteTime(preview);
-   DateTime? overlayFixTime = ReadLastWriteTime(overlayFix);
-   if (!previewTime.HasValue) return overlayFixTime.HasValue ? overlayFix : null;
-   return !overlayFixTime.HasValue || previewTime.Value >= overlayFixTime.Value ? preview : overlayFix;
-  }
-
-  static DateTime? ReadLastWriteTime(string path) {
-   try {
-    File.GetAttributes(path);
-    return File.GetLastWriteTimeUtc(path);
-   } catch (FileNotFoundException) { return null; }
-   catch (DirectoryNotFoundException) { return null; }
   }
 
   PersistedPreferences ReadIfPresent(string path) {

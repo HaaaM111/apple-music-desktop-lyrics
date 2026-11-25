@@ -13,8 +13,7 @@ $run = Join-Path $workspace ('work\qa-preferences-' + [guid]::NewGuid().ToString
 $project = Join-Path $run 'project'
 $buildOne = Join-Path $project 'outputs\build-probe-one\preview'
 $buildTwo = Join-Path $project 'outputs\build-probe-two\preview'
-$legacy = Join-Path $project 'outputs\build-lyrics-top-edge-20261119-02\preview\work\state\settings.json'
-foreach ($directory in @($buildOne, $buildTwo, (Split-Path -Parent $legacy), (Join-Path $project 'src'), (Join-Path $project 'scripts'))) {
+foreach ($directory in @($buildOne, $buildTwo, (Join-Path $project 'src'), (Join-Path $project 'scripts'))) {
  $null = New-Item -ItemType Directory -Path $directory
 }
 $probeSource = Join-Path $run 'PreferencesProbe.cs'
@@ -24,9 +23,6 @@ $assemblyOne = Join-Path $buildOne $assembly.Name
 $assemblyTwo = Join-Path $buildTwo $assembly.Name
 Copy-Item -LiteralPath $assembly.FullName -Destination $assemblyOne
 Copy-Item -LiteralPath $assembly.FullName -Destination $assemblyTwo
-$legacyJson = '{"Version":1,"Display":{"FontSize":38,"FontFamilyName":"Microsoft YaHei UI","FontWeightName":"\u534A\u7C97","ForegroundHex":"#A1B2C3","StrokeHex":"#BC0D1E2F"}}'
-[IO.File]::WriteAllText($legacy, $legacyJson)
-$legacyHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $legacy).Hash
 
 $source = @'
 using System;
@@ -130,22 +126,26 @@ static class PreferencesProbe {
      var attemptedSave = corruptStore.Save(reset);
      Check(!attemptedSave.Succeeded && original.SequenceEqual(File.ReadAllBytes(corrupt)), "corrupt JSON: save after failed load leaves original bytes unchanged");
      break;
-    case "migrate":
+    case "shared-write":
      var firstStore = SharedStore(project, "build-probe-one");
-     var migrated = Load(firstStore, "legacy v1 migration");
-     CheckDisplay(migrated, 38, "#A1B2C3", "#BC0D1E2F", "legacy v1 migration");
-     var legacyTiming = ReadTiming(migrated, 1.5, false, "legacy v1 without timing data");
-     legacyTiming.Adjust(TrackA, 0.2);
-     migrated.TimingOffsets = legacyTiming.ReadOffsets();
-     migrated.Display.FontSize = 43;
-     migrated.Display.ForegroundHex = Fill;
-     Save(firstStore, migrated, "save migrated preferences in the shared path");
+     var initialShared = firstStore.Load();
+     Check(initialShared.Status == LyricsPreferencesLoadStatus.DefaultsUsed, "shared path initially uses defaults");
+     var sharedPreferences = initialShared.Preferences;
+     var sharedTiming = ReadTiming(sharedPreferences, 1.5, false, "shared path initial");
+     sharedTiming.Adjust(TrackA, 0.2);
+     sharedPreferences.TimingOffsets = sharedTiming.ReadOffsets();
+     sharedPreferences.Display.FontSize = 43;
+     sharedPreferences.Display.FontFamilyName = Font;
+     sharedPreferences.Display.FontWeightName = Weight;
+     sharedPreferences.Display.ForegroundHex = Fill;
+     sharedPreferences.Display.StrokeHex = "#BC0D1E2F";
+     Save(firstStore, sharedPreferences, "save preferences in the shared path");
      Check(File.Exists(firstStore.FilePath), "shared settings file exists");
      break;
     case "cross-build":
      var secondStore = SharedStore(project, "build-probe-two");
      var shared = Load(secondStore, "second build");
-     CheckDisplay(shared, 43, Fill, "#BC0D1E2F", "second build uses shared values instead of re-importing legacy values");
+     CheckDisplay(shared, 43, Fill, "#BC0D1E2F", "second build reads shared values");
      ReadTiming(shared, 1.7, true, "second build");
      break;
     default: throw new ArgumentException("Unknown probe phase.");
@@ -173,8 +173,6 @@ Copy-Item -LiteralPath $probeOne -Destination $probeTwo
 Invoke-PreferencesProbe $probeOne 'save'
 Invoke-PreferencesProbe $probeOne 'reopen-reset'
 Invoke-PreferencesProbe $probeTwo 'verify-reset'
-Invoke-PreferencesProbe $probeOne 'migrate'
+Invoke-PreferencesProbe $probeOne 'shared-write'
 Invoke-PreferencesProbe $probeTwo 'cross-build'
-if ((Get-FileHash -Algorithm SHA256 -LiteralPath $legacy).Hash -ne $legacyHash) { throw 'Legacy source file was changed.' }
-Write-Output 'PASS legacy source file remains byte-for-byte unchanged'
 Write-Output 'NOT CHECKED: application startup wiring, live appearance or palette interaction.'

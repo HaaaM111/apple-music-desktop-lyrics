@@ -8,12 +8,11 @@ namespace AMLyrics {
   public readonly string Text;
   public readonly double FontSize;
   public readonly LyricsLongLineMode Mode;
-  public readonly double MeasuredWidth;
   public readonly double Overflow;
   public readonly TimeSpan MotionDuration;
 
-  public LyricsLinePresentation(string text, double fontSize, LyricsLongLineMode mode, double measuredWidth, double overflow, TimeSpan motionDuration) {
-   Text = text ?? ""; FontSize = fontSize; Mode = mode; MeasuredWidth = measuredWidth;
+  public LyricsLinePresentation(string text, double fontSize, LyricsLongLineMode mode, double overflow, TimeSpan motionDuration) {
+   Text = text ?? ""; FontSize = fontSize; Mode = mode;
    Overflow = overflow; MotionDuration = motionDuration;
   }
  }
@@ -37,20 +36,20 @@ namespace AMLyrics {
    text = text ?? "";
    availableWidth = Math.Max(1, availableWidth);
    double fontSize = Clamp(requestedFontSize, LyricsDisplaySettings.MinimumFontSize, LyricsDisplaySettings.MaximumFontSize);
-   if (text.Length == 0) return new LyricsLinePresentation(text, fontSize, LyricsLongLineMode.Fit, 0, 0, TimeSpan.Zero);
+   if (text.Length == 0) return new LyricsLinePresentation(text, fontSize, LyricsLongLineMode.Fit, 0, TimeSpan.Zero);
 
    double measured = Math.Max(0, measure(text, fontSize));
-   if (measured <= availableWidth) return new LyricsLinePresentation(text, fontSize, LyricsLongLineMode.Fit, measured, 0, TimeSpan.Zero);
+   if (measured <= availableWidth) return new LyricsLinePresentation(text, fontSize, LyricsLongLineMode.Fit, 0, TimeSpan.Zero);
 
    double minimumMeasured = Math.Max(0, measure(text, LyricsDisplaySettings.MinimumFontSize));
    if (minimumMeasured <= availableWidth) {
-    return new LyricsLinePresentation(text, LyricsDisplaySettings.MinimumFontSize, LyricsLongLineMode.Fit, minimumMeasured, 0, TimeSpan.Zero);
+    return new LyricsLinePresentation(text, LyricsDisplaySettings.MinimumFontSize, LyricsLongLineMode.Fit, 0, TimeSpan.Zero);
    }
 
    double overflow = Math.Max(0, minimumMeasured - availableWidth);
-   if (!animate) return new LyricsLinePresentation(text, LyricsDisplaySettings.MinimumFontSize, LyricsLongLineMode.Ellipsis, minimumMeasured, overflow, TimeSpan.Zero);
+   if (!animate) return new LyricsLinePresentation(text, LyricsDisplaySettings.MinimumFontSize, LyricsLongLineMode.Ellipsis, overflow, TimeSpan.Zero);
    double seconds = Math.Max(2.5, Math.Min(12, overflow / 35.0 + 2.5));
-   return new LyricsLinePresentation(text, LyricsDisplaySettings.MinimumFontSize, LyricsLongLineMode.Marquee, minimumMeasured, overflow, TimeSpan.FromSeconds(seconds));
+   return new LyricsLinePresentation(text, LyricsDisplaySettings.MinimumFontSize, LyricsLongLineMode.Marquee, overflow, TimeSpan.FromSeconds(seconds));
   }
 
   internal static FormattedText CreateWpfFormattedText(string text, double fontSize, Typeface typeface, double pixelsPerDip) {
@@ -91,17 +90,12 @@ namespace AMLyrics {
   public const double MinimumFontSize = 16;
   public const double MaximumFontSize = 48;
   public const double HorizontalPadding = 22;
-  public const double VerticalPadding = 12;
   public const double TrackGap = 4;
   public const double NextLineScale = 0.68;
-  public const double ToolbarHeight = 34;
-  public const double OverlayCornerRadius = 10;
-  public const double OverlayHorizontalMargin = 2;
 
   public static double ClampWidth(double width) { return Clamp(width, MinimumWidth, MaximumWidth); }
   public static double ClampFontSize(double size) { return Clamp(size, MinimumFontSize, MaximumFontSize); }
   public static double NextLineFontSize(double currentSize) { return Math.Max(MinimumFontSize, ClampFontSize(currentSize) * NextLineScale); }
-  public static double TrackWidth(double windowWidth) { return Math.Max(1, ClampWidth(windowWidth) - HorizontalPadding * 2); }
 
   static double Clamp(double value, double minimum, double maximum) {
    return Math.Max(minimum, Math.Min(maximum, value));

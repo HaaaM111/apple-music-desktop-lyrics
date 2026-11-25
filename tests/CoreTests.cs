@@ -25,6 +25,9 @@ class CoreTests {
   Check(!LrcParser.Parse("[ar:歌手]\n普通歌词\n下一行", "").IsSynchronized, "Parser: plain text stays unsynchronized");
   Check(LrcParser.Parse("[ar:歌手]\n\n", "").Lines.Count == 0, "Parser: metadata-only document is empty");
   Check(LrcParser.Parse("[00:00]\n[00:01]x", "").Lines[0].Text == "", "Parser: blank timed line preserves instrumental break");
+  string longLine = new string('长', 2400) + " English 混排 end";
+  var longDoc = LrcParser.Parse("[00:05.00]" + longLine + "\n[00:05.00]翻译 translation\n[00:05.00]翻译 translation", "long");
+  Check(longDoc.IsSynchronized && longDoc.Lines.Count == 1 && longDoc.Lines[0].Text.StartsWith("长长长") && longDoc.Lines[0].Text.Contains("English 混排 end") && longDoc.Lines[0].Text.Split('\n').Length == 2, "Parser: long mixed-script lyric and merged translation retained without truncation");
   Check(PlaybackMath.FindLine(doc.Lines, 0) == -1, "Timeline: before first line");
   Check(PlaybackMath.FindLine(doc.Lines, 12.3) == 1, "Timeline: exact timestamp boundary");
   Check(PlaybackMath.FindLine(doc.Lines, 10000) == 3, "Timeline: after last line");

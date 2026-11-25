@@ -50,7 +50,7 @@ function Get-LyricBands($Image) {
 
 function Assert-HoverToolbar($Toolbar, [string]$Label) {
  $width = $Toolbar.Width
- if ($width -ne 180) { throw "${Label}: expected a 180px-wide popup-root image, got ${width}px." }
+ if ($width -ne 108) { throw "${Label}: expected a 108px-wide popup-root image, got ${width}px." }
  $pixels = $Toolbar.Pixels
  $buttons = 0
  $firstColumn = -1
@@ -68,7 +68,7 @@ function Assert-HoverToolbar($Toolbar, [string]$Label) {
   }
   $hasPreviousColumn = $hasColumn
  }
- if ($buttons -ne 5) { throw "${Label}: expected five separate visible toolbar buttons, found $buttons." }
+ if ($buttons -ne 3) { throw "${Label}: expected three separate visible toolbar buttons, found $buttons." }
  $rightClearance = $width - 1 - $lastColumn
  if ($firstColumn -lt 1 -or $rightClearance -lt 1 -or [math]::Abs($firstColumn - $rightClearance) -gt 2) {
   throw "${Label}: toolbar buttons are clipped or not centered in the popup image."
@@ -166,7 +166,7 @@ foreach ($scenario in @(@{ Name = 'default'; Width = 760 }, @{ Name = 'max-narro
  Assert-HoverToolbar $toolbar $name
  $results[$name] = $result
  $locations = @($result.Bands | ForEach-Object { "x=$($_.Left)..$($_.Right) y=$($_.Top)..$($_.Bottom)" }) -join '; '
- Write-Output "PASS $name $($result.Width)x$($result.Height): two centered lyric bands ($locations), transparent idle, hover backdrop only in main image, unchanged lyric pixels, five separate popup buttons"
+ Write-Output "PASS $name $($result.Width)x$($result.Height): two centered lyric bands ($locations), transparent idle, hover backdrop only in main image, unchanged lyric pixels, three separate popup buttons"
 }
 
 $default = $results['default']

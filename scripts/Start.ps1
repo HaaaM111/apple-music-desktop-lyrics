@@ -1,10 +1,15 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$build = Get-ChildItem -LiteralPath (Join-Path $root 'outputs') -Directory -Filter 'build-*' |
- Where-Object { (Test-Path -LiteralPath (Join-Path $_.FullName 'AppleMusicLyrics.exe')) -and (Test-Path -LiteralPath (Join-Path $_.FullName 'MediaSession.ps1')) } |
- Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$outputsDir = Join-Path $root 'outputs'
+$build = $null
+if (Test-Path -LiteralPath $outputsDir -PathType Container) {
+ $build = Get-ChildItem -LiteralPath $outputsDir -Directory -Filter 'build-*' |
+  Where-Object { (Test-Path -LiteralPath (Join-Path $_.FullName 'AppleMusicLyrics.exe') -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $_.FullName 'MediaSession.ps1') -PathType Leaf) } |
+  Sort-Object { (Get-Item -LiteralPath (Join-Path $_.FullName 'AppleMusicLyrics.exe')).LastWriteTimeUtc } -Descending |
+  Select-Object -First 1
+}
 if ($null -eq $build) {
  $output = & (Join-Path $PSScriptRoot 'Build.ps1')
  $buildPath = @($output)[-1]
 } else { $buildPath = $build.FullName }
-Start-Process -FilePath (Join-Path $buildPath 'AppleMusicLyrics.exe') -WorkingDirectory $buildPath -WindowStyle Hidden
+Start-Process -FilePath (Join-Path $buildPath 'AppleMusicLyrics.exe') -WorkingDirectory $buildPath

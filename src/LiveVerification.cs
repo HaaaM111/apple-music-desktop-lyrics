@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -28,7 +26,7 @@ namespace AMLyrics {
    check(sample.Track.IsAppleMusic, "Real Apple Music source selected");
    check(sample.Track.IsPlaying, "Real playing state observed without sending playback commands");
    Refresh(); await pendingSelection; Refresh();
-   check(title.Text.Contains(sample.Track.Title), "Real metadata reaches the window");
+   check(currentTrackHeading.Contains(sample.Track.Title), "Real metadata reaches the window");
    var document = lyrics.Read().Document;
    if (document == null || !document.IsSynchronized || document.Lines.Count < 2) throw new InvalidOperationException("Automatic lookup did not produce real synchronized lyrics: " + lyrics.Read().Error);
    check(document.Source.StartsWith("LRCLIB", StringComparison.Ordinal), "Real synchronized lyrics fetched automatically from LRCLIB without importing files");

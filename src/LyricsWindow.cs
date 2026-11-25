@@ -1,47 +1,41 @@
 using System;
-using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
-using System.Windows.Markup;
 using System.Windows.Media;
-using System.Windows.Media.Imaging;
 using System.Windows.Threading;
-using Microsoft.Win32;
 using Forms = System.Windows.Forms;
 using System.Runtime.InteropServices;
 
 namespace AMLyrics {
  public sealed partial class LyricsWindow : Window {
-  // Neutral OKLCH roles mapped to sRGB: surface L~0.19, ink L~0.96, muted L~0.75.
-  internal static readonly Brush Surface = Brush("#141416");
+  // Neutral OKLCH roles mapped to sRGB: ink L~0.96, muted L~0.75.
   internal static readonly Brush Ink = Brush("#F4F4F5");
   internal static readonly Brush Muted = Brush("#B0B0B8");
-  internal static readonly Brush Accent = Brush("#F59BAC");
-  readonly TextBlock title = new TextBlock();
   readonly LyricsLinePresenter current = new LyricsLinePresenter();
   readonly LyricsLinePresenter next = new LyricsLinePresenter();
-  readonly TextBlock status = new TextBlock();
-  readonly TextBlock source = new TextBlock();
   readonly IMediaSource media;
   readonly LocalLyricsProvider local;
   readonly LyricSession lyrics;
   readonly LrclibLyricsProvider online;
-  readonly Button timingButton = new Button();
   readonly LyricTiming timing = new LyricTiming();
   readonly LyricsDisplaySettings displaySettings = new LyricsDisplaySettings();
   readonly LyricsOverlayChrome overlayChrome;
   readonly LyricsSettingsPanel settingsPanel;
   readonly LyricsHitTestBridge hitTestBridge;
-  readonly ILyricsWindowCommands windowCommands;
   readonly LyricsPreferencesStore preferencesStore;
   readonly bool smokeMode;
   bool applyingPreferences;
   string configurationNotice = string.Empty;
+  string hotkeyNotice = string.Empty;
+  string currentTrackHeading = "Apple Music 桌面歌词";
+  string currentStatusText = "等待播放";
+  string currentSourceText = "自动歌词 · LRCLIB";
+  string currentDetailNotice = string.Empty;
+  string currentTimingLabel = "默认";
   readonly Grid contentRoot;
   readonly Border leftResizeHandle;
   readonly Border rightResizeHandle;
@@ -50,6 +44,7 @@ namespace AMLyrics {
   DateTime retryAt = DateTime.MaxValue;
   readonly DispatcherTimer timer;
   readonly Forms.NotifyIcon tray;
+  readonly Forms.ToolStripMenuItem trayLockItem;
   string selectedKey = "";
   string notice = "";
   string noticeKey = "";
@@ -87,42 +82,16 @@ namespace AMLyrics {
    FontFamily = new FontFamily("Segoe UI, Microsoft YaHei UI, Microsoft YaHei");
    FontSize = 12; UseLayoutRounding = true; SnapsToDevicePixels = true;
    AutomationProperties.SetName(this, "Apple Music 桌面歌词");
-   Resources.Add(typeof(Button), XamlReader.Parse(@"<Style xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' TargetType='Button'>
-    <Setter Property='Foreground' Value='#D4D4DA'/><Setter Property='Background' Value='Transparent'/>
-    <Setter Property='Padding' Value='9,4'/><Setter Property='MinHeight' Value='28'/><Setter Property='MinWidth' Value='30'/>
-    <Setter Property='Cursor' Value='Hand'/><Setter Property='BorderThickness' Value='0'/>
-    <Setter Property='Template'><Setter.Value><ControlTemplate TargetType='Button'>
-     <Border x:Name='B' xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml' Background='{TemplateBinding Background}' CornerRadius='4' BorderThickness='1' BorderBrush='Transparent' Padding='{TemplateBinding Padding}'>
-      <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/></Border>
-     <ControlTemplate.Triggers><Trigger Property='IsMouseOver' Value='True'><Setter TargetName='B' Property='Background' Value='#303034'/></Trigger>
-      <Trigger Property='IsKeyboardFocused' Value='True'><Setter TargetName='B' Property='BorderBrush' Value='#F59BAC'/></Trigger>
-      <Trigger Property='IsPressed' Value='True'><Setter TargetName='B' Property='Background' Value='#424248'/></Trigger>
-      <Trigger Property='IsEnabled' Value='False'><Setter Property='Opacity' Value='0.45'/></Trigger></ControlTemplate.Triggers>
-    </ControlTemplate></Setter.Value></Setter></Style>"));
 
    overlayChrome = new LyricsOverlayChrome();
    settingsPanel = new LyricsSettingsPanel(RetryLyrics, () => { var ignored = ImportAsync(); }, (delta) => ChangeTiming(delta, false), () => ChangeTiming(0, true));
    hitTestBridge = new LyricsHitTestBridge(this);
-   windowCommands = new LyricsWindowCommandRouter(SetEnabled, SetLocked, OpenSettings);
-   overlayChrome.SettingsRequested += (s,e) => windowCommands.OpenSettings();
-   overlayChrome.ToggleLockRequested += (s,e) => windowCommands.SetLocked(!overlayChrome.IsLocked);
-   overlayChrome.CloseRequested += (s,e) => windowCommands.SetEnabled(false);
-   overlayChrome.SourceRequested += (s,e) => { OpenSettings(); settingsPanel.FocusSection("歌词"); };
-   overlayChrome.TimingRequested += (s,e) => { OpenSettings(); settingsPanel.FocusSection("同步"); };
-   overlayChrome.PlaybackRequested += (s,e) => { configurationNotice = "播放控制将在 Apple Music 客户端接入完成后启用"; Refresh(); };
-   overlayChrome.SetPlaybackAvailable(false);
+   overlayChrome.SettingsRequested += (s,e) => OpenSettings();
+   overlayChrome.ToggleLockRequested += (s,e) => SetLocked(!overlayChrome.IsLocked);
+   overlayChrome.CloseRequested += (s,e) => SetEnabled(false);
    settingsPanel.DismissRequested += (s,e) => CloseSettings();
    settingsPanel.AppearanceChanged += (s,e) => {
-    var appearance = settingsPanel.ReadAppearance();
-    displaySettings.FontSize = appearance.FontSize;
-    displaySettings.ForegroundHex = appearance.ForegroundHex;
-    displaySettings.FontFamilyName = appearance.FontFamilyName;
-    displaySettings.FontWeightName = appearance.FontWeightName;
-    displaySettings.StrokeHex = appearance.StrokeHex;
-    displaySettings.BackgroundOpacity = appearance.BackgroundOpacity;
-    displaySettings.StrokeEnabled = appearance.StrokeEnabled;
-    displaySettings.ShadowEnabled = appearance.ShadowEnabled;
-    displaySettings.AnimateLongLines = appearance.AnimateLongLines;
+    CopyDisplaySettings(settingsPanel.ReadAppearance(), displaySettings);
     ApplyDisplaySettings();
     SavePreferences();
    };
@@ -166,7 +135,6 @@ namespace AMLyrics {
    Grid.SetZIndex(settingsLayer, 50); contentRoot.Children.Add(settingsLayer);
    Content = contentRoot;
 
-   timingButton.Content = "默认";
    Bind(Key.O, ModifierKeys.Control, () => { var ignored = ImportAsync(); });
    Bind(Key.Q, ModifierKeys.Control, Close); Bind(Key.Escape, ModifierKeys.None, CloseSettingsOrHide);
    Bind(Key.H, ModifierKeys.Control, HideWindow); Bind(Key.OemPlus, ModifierKeys.Control, () => ResizeLyrics(2));
@@ -179,6 +147,8 @@ namespace AMLyrics {
     tray = new Forms.NotifyIcon { Text = "Apple Music 桌面歌词 · 双击显示", Icon = System.Drawing.SystemIcons.Application, Visible = true };
     var menu = new Forms.ContextMenuStrip();
     menu.Items.Add("显示歌词", null, (s,e) => Dispatcher.BeginInvoke(new Action(RestoreWindow)));
+    trayLockItem = new Forms.ToolStripMenuItem("锁定歌词（Ctrl+Alt+Shift+L）", null, (s,e) => Dispatcher.BeginInvoke(new Action(() => SetLocked(!overlayChrome.IsLocked))));
+    menu.Items.Add(trayLockItem);
     menu.Items.Add("退出", null, (s,e) => Dispatcher.BeginInvoke(new Action(Close)));
     tray.ContextMenuStrip = menu; tray.DoubleClick += (s,e) => Dispatcher.BeginInvoke(new Action(RestoreWindow));
    }
@@ -187,17 +157,27 @@ namespace AMLyrics {
     if (!smoke) {
      hotkeyRegistered = RegisterHotKey(handle, 1, 0x0001 | 0x0002 | 0x4000, 0x4C);
      lockHotkeyRegistered = RegisterHotKey(handle, 2, 0x0001 | 0x0002 | 0x0004 | 0x4000, 0x4C);
+     UpdateHotkeyNotice();
      HwndSource.FromHwnd(handle).AddHook(WndProc);
     }
    };
+   IsKeyboardFocusWithinChanged += (s,e) => {
+    if (!(smokeMode && media is TestMediaSource)) UpdateHoverChrome();
+   };
+   overlayChrome.HoverToolbarSurface.IsKeyboardFocusWithinChanged += (s,e) => {
+    if (!(smokeMode && media is TestMediaSource)) UpdateHoverChrome();
+   };
    timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
    timer.Tick += (s,e) => {
-    if (!(smokeMode && media is TestMediaSource)) overlayChrome.SetHovered(!dragging && !resizing && LyricsOverlayHover.IsPointerInside(this, overlayChrome.HoverToolbarSurface));
+    if (!(smokeMode && media is TestMediaSource)) UpdateHoverChrome();
     Refresh();
    };
    IsVisibleChanged += (s,e) => { if (!IsVisible) overlayChrome.SetHovered(false); };
    SizeChanged += (s,e) => { if (e.HeightChanged) KeepWindowVisible(); };
-   Loaded += (s,e) => { LoadPreferences(); ApplyDisplaySettings(); Refresh(); KeepWindowVisible(); timer.Start(); };
+   Loaded += (s,e) => {
+    if (!(smokeMode && media is TestMediaSource)) LoadStartupPreferences(preferencesStore);
+    ApplyDisplaySettings(); Refresh(); KeepWindowVisible(); timer.Start();
+   };
    Closed += (s,e) => {
     SavePreferences();
     closing = true; timer.Stop(); hitTestBridge.Dispose(); lyrics.Dispose(); if (online != null) online.Dispose(); media.Dispose();
@@ -234,6 +214,7 @@ namespace AMLyrics {
   void SetEnabled(bool enabled) { if (enabled) RestoreWindow(); else HideWindow(); SavePreferences(); }
   void OpenSettings() {
    if (overlayChrome.IsLocked) return;
+   overlayChrome.SetHovered(false);
    settingsPanel.Visibility = Visibility.Visible;
    hitTestBridge.SetClickThrough(false);
    UpdateLayout();
@@ -247,11 +228,31 @@ namespace AMLyrics {
   void SetLocked(bool value) {
    if (value) CloseSettings();
    overlayChrome.SetLocked(value);
-   // Keep native hit testing enabled so the visible unlock button remains clickable.
-   hitTestBridge.SetClickThrough(false);
+   hitTestBridge.SetClickThrough(value);
    leftResizeHandle.IsHitTestVisible = !value; rightResizeHandle.IsHitTestVisible = !value;
-   overlayChrome.SetInteractionEnabled(!value);
+   UpdateTrayLockMenuItem();
    SavePreferences();
+  }
+  void UpdateTrayLockMenuItem() {
+   if (trayLockItem != null) trayLockItem.Text = overlayChrome.IsLocked ? "解锁歌词（Ctrl+Alt+Shift+L）" : "锁定歌词（Ctrl+Alt+Shift+L）";
+  }
+  internal void UpdateHotkeyNotice() {
+   if (!hotkeyRegistered && !lockHotkeyRegistered) hotkeyNotice = "快捷键 Ctrl+Alt+L 和 Ctrl+Alt+Shift+L 已被占用，请通过系统托盘菜单恢复或解锁";
+   else if (!hotkeyRegistered) hotkeyNotice = "快捷键 Ctrl+Alt+L 已被占用，请通过系统托盘菜单或再次启动恢复";
+   else if (!lockHotkeyRegistered) hotkeyNotice = "快捷键 Ctrl+Alt+Shift+L 已被占用，锁定时请通过系统托盘菜单解锁";
+   else hotkeyNotice = string.Empty;
+  }
+  internal bool ShouldShowChrome(bool pointerInside, bool keyboardFocused) {
+   if (dragging || resizing || settingsPanel.Visibility == Visibility.Visible) return false;
+   if (overlayChrome.IsLocked) return pointerInside;
+   return pointerInside || keyboardFocused;
+  }
+  bool HasOverlayKeyboardFocus() {
+   return IsKeyboardFocusWithin || overlayChrome.HoverToolbarSurface.IsKeyboardFocusWithin;
+  }
+  void UpdateHoverChrome() {
+   bool pointerInside = LyricsOverlayHover.IsPointerInside(this, overlayChrome.HoverToolbarSurface);
+   overlayChrome.SetHovered(ShouldShowChrome(pointerInside, HasOverlayKeyboardFocus()));
   }
   void ApplyDisplaySettings() {
    displaySettings.Normalize(); lyricSize = LyricsLayoutMetrics.ClampFontSize(displaySettings.FontSize);
@@ -283,12 +284,11 @@ namespace AMLyrics {
    Left = visible.Left; Top = visible.Top;
    current.AlignInkToTop = visible.Top <= workArea.Top + 0.5;
   }
-  void LoadPreferences() {
-   if (smokeMode && media is TestMediaSource) return;
-   var result = preferencesStore.Load();
+  void LoadStartupPreferences(LyricsPreferencesStore store) {
+   var result = store.Load();
    configurationNotice = result.Status == LyricsPreferencesLoadStatus.Loaded || result.Status == LyricsPreferencesLoadStatus.DefaultsUsed ? string.Empty : "设置未加载：" + result.Error;
    var preferences = result.Preferences;
-   if (smokeMode) preferences.Enabled = true;
+   preferences.Enabled = true;
    applyingPreferences = true;
    try { ApplyPreferencesFromPersistence(preferences); }
    finally { applyingPreferences = false; }
@@ -304,7 +304,6 @@ namespace AMLyrics {
     return hwnd == IntPtr.Zero ? Forms.Screen.PrimaryScreen.DeviceName : Forms.Screen.FromHandle(hwnd).DeviceName;
    } catch { return string.Empty; }
   }
-  // T2b persistence hook: the future store can read/write this in-memory state without changing host behavior.
   internal LyricsWindowPreferences ReadPreferencesForPersistence() {
    return new LyricsWindowPreferences { Enabled = IsVisible, Locked = overlayChrome.IsLocked, Width = Width, Left = Left, Top = Top, ScreenDeviceName = CurrentScreenDeviceName(), Display = displaySettings.Clone(), TimingOffsets = timing.ReadOffsets() };
   }
@@ -313,14 +312,19 @@ namespace AMLyrics {
    var copy = preferences.Clone(); copy.Normalize();
    timing.LoadOffsets(copy.TimingOffsets);
    Width = copy.Width; if (!double.IsNaN(copy.Left)) Left = copy.Left; if (!double.IsNaN(copy.Top)) Top = copy.Top;
-   displaySettings.FontSize = copy.Display.FontSize; displaySettings.ForegroundHex = copy.Display.ForegroundHex; displaySettings.FontFamilyName = copy.Display.FontFamilyName;
-   displaySettings.FontWeightName = copy.Display.FontWeightName; displaySettings.StrokeHex = copy.Display.StrokeHex; displaySettings.BackgroundOpacity = copy.Display.BackgroundOpacity;
-   displaySettings.StrokeEnabled = copy.Display.StrokeEnabled; displaySettings.ShadowEnabled = copy.Display.ShadowEnabled; displaySettings.AnimateLongLines = copy.Display.AnimateLongLines;
+   CopyDisplaySettings(copy.Display, displaySettings);
    ApplyDisplaySettings(); SetLocked(copy.Locked); KeepWindowVisible(); if (copy.Enabled) RestoreWindow(); else HideWindow();
   }
-  Button MakeButton(string text, string name, Action action) {
-   var b = new Button { Content = text, ToolTip = name, Margin = new Thickness(2,0,0,0) };
-   AutomationProperties.SetName(b, name); b.Click += (s,e) => action(); return b;
+  static void CopyDisplaySettings(LyricsDisplaySettings source, LyricsDisplaySettings target) {
+   target.FontSize = source.FontSize;
+   target.ForegroundHex = source.ForegroundHex;
+   target.FontFamilyName = source.FontFamilyName;
+   target.FontWeightName = source.FontWeightName;
+   target.StrokeHex = source.StrokeHex;
+   target.BackgroundOpacity = source.BackgroundOpacity;
+   target.StrokeEnabled = source.StrokeEnabled;
+   target.ShadowEnabled = source.ShadowEnabled;
+   target.AnimateLongLines = source.AnimateLongLines;
   }
   void Bind(Key key, ModifierKeys mods, Action action) {
    var command = new RoutedCommand(); CommandBindings.Add(new CommandBinding(command, (s,e) => action()));

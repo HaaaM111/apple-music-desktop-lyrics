@@ -15,7 +15,17 @@ foreach ($reference in $references) {
  if (-not (Test-Path -LiteralPath $path)) { $path = Join-Path (Join-Path $framework 'WPF') $reference }
  $arguments += '/reference:' + $path
 }
-$arguments += @(Get-ChildItem -LiteralPath (Join-Path $root 'src') -Filter '*.cs' | ForEach-Object { $_.FullName })
+$sources = @(
+ 'Contracts.cs', 'DesktopPlacement.cs', 'LiveVerification.cs', 'LrclibLyrics.cs',
+ 'Lyrics.cs', 'LyricsHitTestBridge.cs', 'LyricsLayout.cs', 'LyricsOverlayChrome.cs',
+ 'LyricsOverlayHover.cs', 'LyricsPreferencesStore.cs', 'LyricsSettingsPanel.cs',
+ 'LyricsUiContracts.cs', 'LyricsWindow.cs', 'MediaSource.cs', 'Program.cs', 'WindowBehavior.cs'
+)
+foreach ($source in $sources) {
+ $sourcePath = Join-Path (Join-Path $root 'src') $source
+ if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) { throw "Missing source file: $sourcePath" }
+ $arguments += $sourcePath
+}
 & $compiler @arguments
 if ($LASTEXITCODE -ne 0) { throw 'Application compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'MediaSession.ps1') -Destination (Join-Path $OutputDirectory 'MediaSession.ps1') -ErrorAction Stop

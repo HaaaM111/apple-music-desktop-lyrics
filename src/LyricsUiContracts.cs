@@ -4,17 +4,10 @@ using System.Windows;
 
 namespace AMLyrics {
  public enum LyricsLongLineMode { Fit, Marquee, Ellipsis }
- public enum LyricsOverlayCommand { OpenSettings, ToggleLock, Close }
-
- public interface ILyricsWindowCommands {
-  void SetEnabled(bool enabled);
-  void SetLocked(bool locked);
-  void OpenSettings();
- }
 
  public sealed class LyricsDisplaySettings {
-  public const double MinimumFontSize = 16;
-  public const double MaximumFontSize = 48;
+  public const double MinimumFontSize = LyricsLayoutMetrics.MinimumFontSize;
+  public const double MaximumFontSize = LyricsLayoutMetrics.MaximumFontSize;
   public double FontSize = 30;
   public string ForegroundHex = "#FFF7FA";
   public string FontFamilyName = "Segoe UI";
@@ -49,9 +42,9 @@ namespace AMLyrics {
  }
 
  public sealed class LyricsWindowPreferences {
-  public const double MinimumWidth = 420;
-  public const double MaximumWidth = 1400;
-  public const double DefaultWidth = 760;
+  public const double MinimumWidth = LyricsLayoutMetrics.MinimumWidth;
+  public const double MaximumWidth = LyricsLayoutMetrics.MaximumWidth;
+  public const double DefaultWidth = LyricsLayoutMetrics.DefaultWidth;
   public bool Enabled;
   public bool Locked;
   public double Width = DefaultWidth;
@@ -76,37 +69,6 @@ namespace AMLyrics {
    Display.Normalize();
    TimingOffsets = LyricTiming.NormalizeOffsets(TimingOffsets);
   }
- }
-
- public sealed class LyricsOverlayState {
-  public bool Enabled;
-  public bool Locked;
-  public bool ClientAvailable;
-  public bool IntegrationReady;
-
-  public LyricsOverlayState Clone() {
-   return new LyricsOverlayState { Enabled = Enabled, Locked = Locked,
-    ClientAvailable = ClientAvailable, IntegrationReady = IntegrationReady };
-  }
- }
-
- public sealed class LyricsWindowCommandRouter : ILyricsWindowCommands {
-  readonly Action<bool> setEnabled;
-  readonly Action<bool> setLocked;
-  readonly Action openSettings;
-
-  public LyricsWindowCommandRouter(Action<bool> setEnabled, Action<bool> setLocked, Action openSettings) {
-   if (setEnabled == null) throw new ArgumentNullException("setEnabled");
-   this.setEnabled = setEnabled;
-   if (setLocked == null) throw new ArgumentNullException("setLocked");
-   this.setLocked = setLocked;
-   if (openSettings == null) throw new ArgumentNullException("openSettings");
-   this.openSettings = openSettings;
-  }
-
-  public void SetEnabled(bool enabled) { setEnabled(enabled); }
-  public void SetLocked(bool locked) { setLocked(locked); }
-  public void OpenSettings() { openSettings(); }
  }
 
  public static class LyricsWindowGeometry {

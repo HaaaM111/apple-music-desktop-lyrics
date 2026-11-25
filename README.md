@@ -6,11 +6,11 @@ Windows 上的 Apple Music 桌面歌词工具。播放歌曲时从 [LRCLIB](http
 
 1. 确保已安装 Windows 版 Apple Music 和 .NET Framework 4.8。
 2. 获取本仓库的源码，在项目目录双击 `Start.cmd`。首次运行时会在 `outputs/` 下构建。
-3. 播放歌曲后，用 `Ctrl+Alt+L` 显示歌词。将鼠标移入歌词浮层可打开设置。
+3. 手动启动后歌词浮层会直接显示。播放歌曲后自动匹配歌词；若手动隐藏了浮层，可用 `Ctrl+Alt+L` 恢复。将鼠标移入歌词浮层可打开设置。
 
 ## 功能
 
-- 两行透明置顶歌词，支持拖动、贴顶和调整宽度。
+- 两行透明置顶歌词，支持拖动、贴顶和调整宽度；锁定时歌词本体真正鼠标穿透，鼠标悬停可在外侧点「解锁」，也可通过托盘菜单或 `Ctrl+Alt+Shift+L` 解锁。
 - 可分别选择字体色和描边色；记住字体、字号、颜色和逐曲校时。
 - 支持本地 LRC/TXT 备用；无时间戳的歌词仅预览前两行，不假装同步。
 
@@ -20,7 +20,5 @@ Windows 上的 Apple Music 桌面歌词工具。播放歌曲时从 [LRCLIB](http
 
 ## 文档
 
-- [完整使用与构建说明](docs/README.md)
-- [检测记录与已知限制](docs/VALIDATION.md)
-
-[自动歌词实测记录](docs/AUTOMATIC-LYRICS.md) · [延迟优化与校时说明](docs/TIMING.md)
+- [完整使用与构建说明](docs/README.md) · [界面与架构设计](DESIGN.md)
+- 历史里程碑记录：[早期离线基线记录](docs/VALIDATION.md) · [自动歌词基线记录](docs/AUTOMATIC-LYRICS.md) · [延迟优化与校时记录](docs/TIMING.md)

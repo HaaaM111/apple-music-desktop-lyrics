@@ -48,38 +48,35 @@ namespace AMLyrics {
    if (online != null) online.Invalidate(sample.Track);
    pendingSelection = lyrics.SelectAsync(sample.Track); Refresh();
   }
-  void Empty(string heading, string detail, string state) { displayedLineIndex = -1; current.Text = heading; next.Text = detail; status.Text = state; source.Text = "自动歌词 · LRCLIB"; }
+  void Empty(string heading, string detail, string state) { displayedLineIndex = -1; current.Text = heading; next.Text = detail; currentStatusText = state; currentSourceText = "自动歌词 · LRCLIB"; }
   void UpdateSettingsPanel(bool fresh, TrackSnapshot track) {
    var state = lyrics.Read();
-   string detail = next.ToolTip as string;
-   if (string.IsNullOrWhiteSpace(detail)) detail = status.Text;
+   string detail = string.IsNullOrWhiteSpace(currentDetailNotice) ? currentStatusText : currentDetailNotice;
+   if (!string.IsNullOrWhiteSpace(hotkeyNotice)) detail = hotkeyNotice + (string.IsNullOrWhiteSpace(detail) ? string.Empty : "；" + detail);
    if (!string.IsNullOrWhiteSpace(configurationNotice)) detail = configurationNotice + (string.IsNullOrWhiteSpace(detail) ? string.Empty : "；" + detail);
-   settingsPanel.Apply(displaySettings, source.Text, detail,
+   string timingSummary = currentTimingLabel == "默认" ? "默认（提前 1.5 秒）" : currentTimingLabel + "（基于默认提前 1.5 秒）";
+   settingsPanel.Apply(displaySettings, currentSourceText, detail, timingSummary,
     fresh && track != null && !state.Loading,
     !importing && fresh && track != null,
     fresh && track != null && state.Document != null && state.Document.IsSynchronized);
   }
   internal void Refresh() {
    if (closing) return;
-   next.ToolTip = null;
+   currentDetailNotice = string.Empty;
    var sample = media.Read();
    bool fresh = PlaybackMath.IsFresh(sample, DateTime.UtcNow);
-   var initialState = lyrics.Read();
-   overlayChrome.SetPlaying(sample.Track != null && sample.Track.IsPlaying);
-   timingButton.IsEnabled = fresh && sample.Track != null && initialState.Document != null && initialState.Document.IsSynchronized;
-   timingButton.Content = "默认";
+   currentTimingLabel = "默认";
    if (!fresh || sample.Status != "Connected" || sample.Track == null) {
     if (selectedKey.Length > 0) { selectedKey = ""; lyrics.Clear(); }
-    title.Text = "Apple Music 桌面歌词";
+    currentTrackHeading = "Apple Music 桌面歌词";
     if (!fresh) Empty("媒体连接中断", "正在重新连接；确认 Apple Music 仍在运行", "等待连接");
-    else if (sample.Status == "Error") { Empty("媒体读取失败", "稍后自动重试；详情见提示", "获取失败"); next.ToolTip = sample.Message; }
+    else if (sample.Status == "Error") { Empty("媒体读取失败", "稍后自动重试；详情见提示", "获取失败"); currentDetailNotice = sample.Message ?? string.Empty; }
     else Empty("等待 Apple Music", "播放歌曲后，将自动获取并同步显示歌词", "等待播放");
     UpdateSettingsPanel(fresh, sample.Track);
     return;
    }
    var track = sample.Track;
-   title.Text = track.Title + (string.IsNullOrWhiteSpace(track.Artist) ? "" : "  /  " + track.Artist);
-   title.ToolTip = title.Text + "\n拖动移动窗口";
+   currentTrackHeading = track.Title + (string.IsNullOrWhiteSpace(track.Artist) ? "" : "  /  " + track.Artist);
    if (selectedKey != track.Key || (selectedDuration <= 0 && track.DurationSeconds > 0)) {
     selectedKey = track.Key; selectedDuration = track.DurationSeconds; notice = "";
     attempts = 1; retryAt = DateTime.UtcNow.AddSeconds(30);
@@ -91,19 +88,19 @@ namespace AMLyrics {
     pendingSelection = lyrics.SelectAsync(track); state = lyrics.Read();
    }
    if (state.Loading) { Empty("正在自动获取歌词", "正在匹配当前歌曲的同步歌词", "自动匹配中"); UpdateSettingsPanel(fresh, track); return; }
-   if (state.Error.Length > 0) { Empty("暂时无法获取歌词", state.Error + " 可点击重试。", "稍后自动重试"); next.ToolTip = state.Error; UpdateSettingsPanel(fresh, track); return; }
+   if (state.Error.Length > 0) { Empty("暂时无法获取歌词", state.Error + " 可点击重试。", "稍后自动重试"); currentDetailNotice = state.Error; UpdateSettingsPanel(fresh, track); return; }
    if (notice.Length > 0 && noticeKey == track.Key) { Empty("歌词导入未完成", notice, "请重试导入"); UpdateSettingsPanel(fresh, track); return; }
    var doc = state.Document;
    if (doc == null || doc.Lines.Count == 0) { Empty("未找到匹配歌词", "已自动查询；可以重试，或使用本地备用歌词", "已连接 Apple Music"); UpdateSettingsPanel(fresh, track); return; }
-   source.Text = doc.Source; source.ToolTip = doc.Source;
+   currentSourceText = doc.Source;
    if (!doc.IsSynchronized) {
     displayedLineIndex = -1;
     current.Text = doc.Lines[0].Text;
     next.Text = doc.Lines.Count > 1 ? doc.Lines[1].Text : "此文件没有时间戳";
-    status.Text = "仅有非同步歌词"; UpdateSettingsPanel(fresh, track); return;
+    currentStatusText = "仅有非同步歌词"; UpdateSettingsPanel(fresh, track); return;
    }
    if (!sample.TimelineReliable) {
-    current.Text = "时间轴不可用"; next.Text = "已加载同步歌词，等待可靠播放位置"; status.Text = "同步已暂停"; UpdateSettingsPanel(fresh, track); return;
+    current.Text = "时间轴不可用"; next.Text = "已加载同步歌词，等待可靠播放位置"; currentStatusText = "同步已暂停"; UpdateSettingsPanel(fresh, track); return;
    }
    double offset = timing.Read(track.Key);
    double position = LyricTiming.Position(sample, DateTime.UtcNow, offset);
@@ -111,11 +108,11 @@ namespace AMLyrics {
    displayedLineIndex = index;
    current.Text = index < 0 ? "前奏" : (doc.Lines[index].Text.Length == 0 ? "间奏" : doc.Lines[index].Text);
    next.Text = index + 1 < doc.Lines.Count ? doc.Lines[index + 1].Text : "";
-   status.Text = track.IsPlaying ? "同步中" : "已暂停";
+   currentStatusText = track.IsPlaying ? "同步中" : "已暂停";
    double adjustment = offset - LyricTiming.DefaultLeadSeconds;
    if (Math.Abs(adjustment) > 0.001) {
     string label = (adjustment > 0 ? "提前 " : "延后 ") + Math.Abs(adjustment).ToString("0.0") + " 秒";
-    timingButton.Content = label;
+    currentTimingLabel = label;
    }
    UpdateSettingsPanel(fresh, track);
   }
@@ -234,7 +231,7 @@ namespace AMLyrics {
    Width = LyricsLayoutMetrics.DefaultWidth;
    displaySettings.FontSize = LyricsLayoutMetrics.DefaultFontSize;
    displaySettings.FontFamilyName = "Segoe UI";
-   displaySettings.FontWeightName = "常規";
+   displaySettings.FontWeightName = "常规";
    displaySettings.ForegroundHex = "#FFF7FA";
    displaySettings.StrokeHex = "#0F0F12";
    displaySettings.StrokeEnabled = displaySettings.ShadowEnabled = true;
@@ -246,34 +243,42 @@ namespace AMLyrics {
     ((SolidColorBrush)overlayChrome.Frame.Background).Color.A > 158, "Window: hover shows frame and controls with the saved backdrop opacity");
    check(overlayChrome.Toolbar.HorizontalAlignment == HorizontalAlignment.Center &&
     PresentationSource.FromVisual(overlayChrome.Toolbar) != PresentationSource.FromVisual(overlayChrome.Frame) &&
-    overlayChrome.Toolbar.Children.Count == 5 &&
-    overlayChrome.LockButton == overlayChrome.Toolbar.Children[2] &&
-    ((Button)overlayChrome.Toolbar.Children[0]).Content.ToString() == "源" &&
-    ((Button)overlayChrome.Toolbar.Children[1]).Content.ToString() == "校" &&
-    ((Button)overlayChrome.Toolbar.Children[3]).Content.ToString() == "⚙" &&
-    ((Button)overlayChrome.Toolbar.Children[4]).Content.ToString() == "×", "Window: toolbar is centered above the lyric frame without playback placeholders");
+    overlayChrome.Toolbar.Children.Count == 3 &&
+    overlayChrome.SettingsButton == overlayChrome.Toolbar.Children[0] &&
+    overlayChrome.LockButton == overlayChrome.Toolbar.Children[1] &&
+    ((Button)overlayChrome.Toolbar.Children[0]).Content.ToString() == "⚙" &&
+    ((Button)overlayChrome.Toolbar.Children[1]).Content.ToString() == "🔒" &&
+    ((Button)overlayChrome.Toolbar.Children[2]).Content.ToString() == "×",
+    "Window: toolbar is centered with settings, lock, and close buttons");
+   check(ShouldShowChrome(false, true), "Window: keyboard focus reveals chrome when unlocked and settings are closed");
    overlayChrome.SettingsButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-   overlayChrome.SetHovered(false); UpdateLayout();
+   UpdateLayout();
    overlayChrome.Toolbar.MoveFocus(new System.Windows.Input.TraversalRequest(System.Windows.Input.FocusNavigationDirection.Next));
    check(!overlayChrome.Frame.IsVisible && !overlayChrome.Toolbar.IsVisible && !overlayChrome.SettingsButton.IsVisible &&
-    ((SolidColorBrush)Background).Color.A == 0 && settingsPanel.IsVisible,
-    "Window: leaving after clicking settings hides all chrome even after focus traversal, without closing settings");
+    !ShouldShowChrome(true, true) && ((SolidColorBrush)Background).Color.A == 0 && settingsPanel.IsVisible &&
+    settingsPanel.AreReservedLanguageButtonsHidden,
+    "Window: opening settings hides all hover chrome and keeps it suppressed while pointer hovers over the overlay");
    CloseSettings();
-   SetLocked(true); overlayChrome.SetHovered(true); UpdateLayout();
+   SetLocked(true); overlayChrome.SetHovered(ShouldShowChrome(true, false)); UpdateLayout();
    check(overlayChrome.IsLocked && overlayChrome.Frame.Visibility == Visibility.Collapsed &&
     overlayChrome.Toolbar.Visibility == Visibility.Collapsed && overlayChrome.UnlockButton.Visibility == Visibility.Visible &&
-    overlayChrome.UnlockButton.IsEnabled && !hitTestBridge.IsClickThrough &&
-    !leftResizeHandle.IsHitTestVisible && !rightResizeHandle.IsHitTestVisible, "Window: locked state shows only a clickable unlock control and disables resizing");
+    overlayChrome.UnlockButton.Content.ToString() == "🔓" &&
+    overlayChrome.UnlockButton.IsEnabled && hitTestBridge.IsClickThrough &&
+    !leftResizeHandle.IsHitTestVisible && !rightResizeHandle.IsHitTestVisible,
+    "Window: locked state keeps main overlay click-through while showing a clickable popup unlock button");
    SavePreview(Path.Combine(folder, "lyrics-locked-preview.png"));
-   overlayChrome.SetHovered(false); UpdateLayout();
+   overlayChrome.SetHovered(ShouldShowChrome(false, true)); UpdateLayout();
    check(!overlayChrome.UnlockButton.IsVisible && !overlayChrome.Toolbar.IsVisible && !overlayChrome.Frame.IsVisible,
-    "Window: leaving a locked overlay hides the unlock control");
-   overlayChrome.SetHovered(true);
+    "Window: leaving a locked overlay hides the unlock button even with keyboard focus");
+   HideWindow(); RestoreWindow();
+   check(hitTestBridge.IsClickThrough, "Window: locked click-through persists across hide and restore");
+   overlayChrome.SetHovered(ShouldShowChrome(true, false)); UpdateLayout();
    overlayChrome.UnlockButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
    UpdateLayout();
    check(!overlayChrome.IsLocked && overlayChrome.Frame.Visibility == Visibility.Visible &&
     overlayChrome.Toolbar.Visibility == Visibility.Visible && overlayChrome.UnlockButton.Visibility == Visibility.Collapsed &&
-    overlayChrome.LockButton.IsEnabled && !hitTestBridge.IsClickThrough, "Window: unlock restores the toolbar and lyric frame");
+    overlayChrome.LockButton.IsEnabled && !hitTestBridge.IsClickThrough,
+    "Window: clicking popup unlock restores the toolbar, lyric frame, and hit testing");
    ResizeLyrics(100); check(current.RequestedFontSize == 48, "Window: maximum font size");
    Width = LyricsLayoutMetrics.MinimumWidth;
    CheckDockedLyrics(folder, "max-narrow", check);
@@ -300,11 +305,11 @@ namespace AMLyrics {
    ResizeLyrics(-100); check(current.RequestedFontSize == 16, "Window: minimum font size");
    fake.Sample.Track.IsPlaying = false; fake.Sample.Track.PositionSeconds = 18.4;
    ChangeTiming(0.2, false);
-   check(displayedLineIndex == 2 && timingButton.Content.ToString() == "提前 0.2 秒", "Window: manual calibration displays only its adjustment from default");
+   check(displayedLineIndex == 2 && currentTimingLabel == "提前 0.2 秒" && settingsPanel.TimingStatusText.Contains("提前 0.2 秒"), "Window: manual calibration displays only its adjustment from default");
    ChangeTiming(0, true);
-   check(displayedLineIndex == 1 && timing.Read(fake.Sample.Track.Key) == 1.5 && timingButton.Content.ToString() == "默认", "Window: reset shows default while retaining the calibrated baseline");
+   check(displayedLineIndex == 1 && timing.Read(fake.Sample.Track.Key) == 1.5 && currentTimingLabel == "默认" && settingsPanel.TimingStatusText.Contains("默认"), "Window: reset shows default while retaining the calibrated baseline");
    fake.Sample.TimelineReliable = false; Refresh(); check(current.Text == "时间轴不可用", "Window: missing timeline state");
-   fake.Sample.TimelineReliable = true; fake.Sample.Track.IsPlaying = false; Refresh(); check(status.Text == "已暂停", "Window: paused state");
+   fake.Sample.TimelineReliable = true; fake.Sample.Track.IsPlaying = false; Refresh(); check(currentStatusText == "已暂停", "Window: paused state");
    string[] untimedLines = {
     "櫻花覆蓋地面", "風輕輕吹過", "沿著河岸慢慢走過熟悉的街道",
     "還記得那天我們一起看見的晚霞", "那些沒有說完的話留在春天裡"
@@ -315,13 +320,68 @@ namespace AMLyrics {
    check(current.Text == untimedLines[0] && next.Text == untimedLines[1] && next.Presentation.Mode == LyricsLongLineMode.Fit,
     "Window: unsynchronized text displays only the first two lines without overflowing the next track");
    var untimedDocument = lyrics.Read().Document;
-   check(status.Text == "仅有非同步歌词" && displayedLineIndex == -1 && untimedDocument != null && !untimedDocument.IsSynchronized &&
+   check(currentStatusText == "仅有非同步歌词" && displayedLineIndex == -1 && untimedDocument != null && !untimedDocument.IsSynchronized &&
     string.Join("\n", untimedDocument.Lines.ConvertAll(line => line.Text)) == untimedText,
     "Window: unsynchronized text is labeled and preserves every source line");
+   hotkeyRegistered = true; lockHotkeyRegistered = false; UpdateHotkeyNotice(); Refresh();
+   check(settingsPanel.DetailText.Contains("Ctrl+Alt+Shift+L"), "Window: hotkey registration failure surfaces in settings details");
+   hotkeyRegistered = true; lockHotkeyRegistered = true; UpdateHotkeyNotice(); Refresh();
    fake.Sample = new MediaSample { Status = "Error", Message = "Test error" }; Refresh(); check(current.Text == "媒体读取失败", "Window: media error state");
    fake.Sample = new MediaSample { ReceivedAtUtc = DateTime.UtcNow.AddSeconds(-5) }; Refresh(); check(current.Text == "媒体连接中断", "Window: stale media state");
    CheckColorPickers(check);
    HideWindow(); check(!IsVisible, "Window: hide"); RestoreWindow(); check(IsVisible, "Window: restore");
+
+   var startupPreferences = new LyricsWindowPreferences {
+    Enabled = false, Locked = true, Width = 637,
+    Display = new LyricsDisplaySettings {
+     FontSize = 37, ForegroundHex = "#4A91C3", FontFamilyName = "Consolas", FontWeightName = "粗体",
+     StrokeHex = "#234567", BackgroundOpacity = 0.35, StrokeEnabled = false, ShadowEnabled = false, AnimateLongLines = false
+    }
+   };
+   const string startupTrackKey = "smoke-startup-track";
+   startupPreferences.TimingOffsets[startupTrackKey] = 2.4;
+   string startupSettingsPath = Path.Combine(folder, "startup-preferences-" + Guid.NewGuid().ToString("N"), "settings.json");
+   var startupStore = new LyricsPreferencesStore(startupSettingsPath);
+   var saved = startupStore.Save(startupPreferences);
+   check(saved.Succeeded, "Window: save isolated startup preferences with lyrics disabled");
+   if (!saved.Succeeded) return;
+   byte[] originalSettings = File.ReadAllBytes(startupSettingsPath);
+
+   HideWindow();
+   bool wasHidden = !IsVisible;
+   LoadStartupPreferences(startupStore);
+   check(wasHidden && IsVisible && startupStore.LastLoadStatus == LyricsPreferencesLoadStatus.Loaded,
+    "Window: manual startup shows lyrics despite saved Enabled=false");
+   UpdateLayout();
+   var applied = ReadPreferencesForPersistence();
+   var display = applied.Display;
+   var expectedDisplay = startupPreferences.Display;
+   double expectedWidth = startupPreferences.Width;
+   double dpiScale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+   double widthErrorPixels = Math.Max(Math.Abs(applied.Width - expectedWidth), Math.Abs(ActualWidth - expectedWidth)) * dpiScale;
+   bool widthPreserved = startupStore.Current.Width == expectedWidth && widthErrorPixels <= 1.000001;
+   check(widthPreserved, widthPreserved ? "Window: manual startup preserves width within one device pixel" :
+    string.Format("Window: manual startup preserves width (expected={0:R}, loaded={1:R}, applied={2:R}, actual={3:R}, dpiScale={4:R})",
+     expectedWidth, startupStore.Current.Width, applied.Width, ActualWidth, dpiScale));
+
+   double appliedTiming = timing.Read(startupTrackKey);
+   double expectedTiming = startupPreferences.TimingOffsets[startupTrackKey];
+   bool lockAndTimingPreserved = applied.Locked == startupPreferences.Locked && appliedTiming == expectedTiming;
+   check(lockAndTimingPreserved, lockAndTimingPreserved ? "Window: manual startup preserves lock and track timing" :
+    string.Format("Window: manual startup preserves lock and track timing (lock={0}, expected={1}; timing={2:R}, expected={3:R})",
+     applied.Locked, startupPreferences.Locked, appliedTiming, expectedTiming));
+
+   var foregroundBrush = current.ForegroundBrush as SolidColorBrush;
+   Color? foregroundColor = foregroundBrush == null ? (Color?)null : foregroundBrush.Color;
+   check(display.FontSize == expectedDisplay.FontSize && current.RequestedFontSize == expectedDisplay.FontSize &&
+    display.ForegroundHex == expectedDisplay.ForegroundHex && foregroundColor == Color.FromRgb(0x4A, 0x91, 0xC3) &&
+    display.FontFamilyName == expectedDisplay.FontFamilyName && display.FontWeightName == expectedDisplay.FontWeightName,
+    "Window: manual startup preserves font and foreground color");
+   check(display.StrokeHex == expectedDisplay.StrokeHex && display.BackgroundOpacity == expectedDisplay.BackgroundOpacity &&
+    display.StrokeEnabled == expectedDisplay.StrokeEnabled && display.ShadowEnabled == expectedDisplay.ShadowEnabled && display.AnimateLongLines == expectedDisplay.AnimateLongLines,
+    "Window: manual startup preserves stroke, opacity and appearance switches");
+   check(!startupStore.Current.Enabled && File.Exists(startupSettingsPath) && originalSettings.SequenceEqual(File.ReadAllBytes(startupSettingsPath)),
+    "Window: manual startup leaves the source preferences unchanged and disabled");
   }
  }
  public sealed class TestMediaSource : IMediaSource {

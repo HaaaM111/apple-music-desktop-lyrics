@@ -1,5 +1,4 @@
 ﻿$ErrorActionPreference = 'Stop'
-$root = Split-Path -Parent $PSScriptRoot
 Write-Output '=== Read-only Windows media session probe ==='
 & "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'MediaSession.ps1') -Once
 Write-Output '=== Read-only Apple Music accessibility probe (no actions invoked) ==='
