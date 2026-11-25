@@ -5,11 +5,26 @@ using System.Windows.Interop;
 
 namespace AMLyrics {
  internal static class LyricsOverlayHover {
+  const int DwmwaCloaked = 14;
+
+  internal static bool IsHandleCloaked(IntPtr hwnd) {
+   if (hwnd == IntPtr.Zero) return false;
+   int cloaked;
+   return DwmGetWindowAttribute(hwnd, DwmwaCloaked, out cloaked, sizeof(int)) == 0 && cloaked != 0;
+  }
+
+  internal static bool IsWindowCloaked(Window window) {
+   if (window == null) return false;
+   var source = PresentationSource.FromVisual(window) as HwndSource;
+   return source != null && IsHandleCloaked(source.Handle);
+  }
+
   internal static bool IsPointerInside(Window window, FrameworkElement toolbarSurface = null) {
    if (window == null || !window.IsVisible || window.WindowState == WindowState.Minimized) return false;
 
    var source = PresentationSource.FromVisual(window) as HwndSource;
    if (source == null || source.Handle == IntPtr.Zero) return false;
+   if (!IsWindowVisible(source.Handle) || IsHandleCloaked(source.Handle)) return false;
 
    ScreenPoint pointer;
    ScreenRect bounds;
@@ -45,5 +60,12 @@ namespace AMLyrics {
   [DllImport("user32.dll", ExactSpelling = true)]
   [return: MarshalAs(UnmanagedType.Bool)]
   static extern bool GetWindowRect(IntPtr window, out ScreenRect bounds);
+
+  [DllImport("user32.dll", ExactSpelling = true)]
+  [return: MarshalAs(UnmanagedType.Bool)]
+  static extern bool IsWindowVisible(IntPtr window);
+
+  [DllImport("dwmapi.dll", ExactSpelling = true)]
+  static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
  }
 }

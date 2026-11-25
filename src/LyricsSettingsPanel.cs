@@ -47,8 +47,9 @@ namespace AMLyrics {
   readonly Button earlierButton;
   readonly Button laterButton;
   readonly Button resetTimingButton;
-  readonly Button translationButton;
-  readonly Button romanizationButton;
+  readonly CheckBox translationCheckBox;
+  readonly CheckBox romanizationCheckBox;
+  readonly TextBlock languageAvailabilityText;
   readonly Action retry;
   readonly Action import;
   readonly Action<double> adjustTiming;
@@ -129,12 +130,16 @@ namespace AMLyrics {
    retryButton = MakeButton("重试", "重新获取歌词", delegate { if (retry != null) retry(); });
    importButton = MakeButton("本地备用", "导入本地 LRC 或 TXT 歌词", delegate { if (import != null) import(); });
    lyricsButtons.Children.Add(retryButton); lyricsButtons.Children.Add(importButton); lyricsGroup.Children.Add(lyricsButtons);
-   translationButton = MakeButton("翻译（暂不可用）", "翻译歌词（暂不可用，没有可用回调）", null);
-   romanizationButton = MakeButton("音译（暂不可用）", "音译歌词（暂不可用，没有可用回调）", null);
-   translationButton.IsEnabled = false; romanizationButton.IsEnabled = false;
-   // Reserved placeholders for future translation/romanization support; hidden from current settings UI.
-   translationButton.Visibility = Visibility.Collapsed; romanizationButton.Visibility = Visibility.Collapsed;
-   lyricsGroup.Children.Add(translationButton); lyricsGroup.Children.Add(romanizationButton);
+   translationCheckBox = AddCheckBox(lyricsGroup, "显示翻译", false, "显示歌词翻译");
+   romanizationCheckBox = AddCheckBox(lyricsGroup, "显示音译", false, "显示歌词音译");
+   languageAvailabilityText = new TextBlock {
+    Foreground = new SolidColorBrush(Color.FromRgb(88, 91, 101)),
+    TextWrapping = TextWrapping.Wrap,
+    Margin = new Thickness(0, 4, 0, 6),
+    Text = "翻译/音译：随 Apple Music 原生歌词或双语 LRC 自动识别"
+   };
+   AutomationProperties.SetName(languageAvailabilityText, "翻译与音译状态");
+   lyricsGroup.Children.Add(languageAvailabilityText);
 
    syncGroup = AddGroup("同步");
    timingStatusText = new TextBlock {
@@ -167,7 +172,9 @@ namespace AMLyrics {
   public bool CanImport { get { return importButton.IsEnabled; } }
   public string TimingStatusText { get { return timingStatusText.Text; } }
   public string DetailText { get { return detailText.Text; } }
-  internal bool AreReservedLanguageButtonsHidden { get { return translationButton.Visibility == Visibility.Collapsed && romanizationButton.Visibility == Visibility.Collapsed; } }
+  public CheckBox TranslationCheckBox { get { return translationCheckBox; } }
+  public CheckBox RomanizationCheckBox { get { return romanizationCheckBox; } }
+  public string LanguageStatusText { get { return languageAvailabilityText.Text; } }
   public TextBox ForegroundColorBox { get { return foregroundColor.Box; } }
   public TextBox StrokeColorBox { get { return strokeColor.Box; } }
 
@@ -181,17 +188,20 @@ namespace AMLyrics {
     BackgroundOpacity = opacitySlider.Value,
     StrokeEnabled = strokeCheckBox.IsChecked == true,
     ShadowEnabled = shadowCheckBox.IsChecked == true,
-    AnimateLongLines = animateCheckBox.IsChecked == true
+    AnimateLongLines = animateCheckBox.IsChecked == true,
+    ShowTranslation = translationCheckBox.IsChecked == true,
+    ShowRomanization = romanizationCheckBox.IsChecked == true
    };
    result.Normalize(); return result;
   }
 
-  public void Apply(LyricsDisplaySettings settings, string source, string detail, string timingSummary, bool canRetry, bool canImport, bool canAdjustTiming) {
+  public void Apply(LyricsDisplaySettings settings, string source, string detail, string timingSummary, bool canRetry, bool canImport, bool canAdjustTiming, string languageStatus = null) {
    settings = settings == null ? new LyricsDisplaySettings() : settings.Clone(); settings.Normalize();
    if (!colorDialogOpen && !IsKeyboardFocusWithin && !surface.IsKeyboardFocusWithin) ApplyAppearance(settings);
    sourceText.Text = string.IsNullOrWhiteSpace(source) ? "歌词来源：未选择" : "歌词来源：" + source;
    detailText.Text = string.IsNullOrWhiteSpace(detail) ? "状态：暂无详细信息" : detail;
    timingStatusText.Text = string.IsNullOrWhiteSpace(timingSummary) ? "当前歌曲校时：默认（提前 1.5 秒）" : "当前歌曲校时：" + timingSummary;
+   languageAvailabilityText.Text = string.IsNullOrWhiteSpace(languageStatus) ? "翻译/音译：随 Apple Music 原生歌词或双语 LRC 自动识别" : languageStatus;
    retryButton.IsEnabled = canRetry; importButton.IsEnabled = canImport;
    earlierButton.IsEnabled = canAdjustTiming; laterButton.IsEnabled = canAdjustTiming; resetTimingButton.IsEnabled = canAdjustTiming;
   }
@@ -203,6 +213,7 @@ namespace AMLyrics {
     fontSizeSlider.Value = appearance.FontSize; opacitySlider.Value = appearance.BackgroundOpacity;
     ApplyColor(foregroundColor, appearance.ForegroundHex); ApplyColor(strokeColor, appearance.StrokeHex);
     strokeCheckBox.IsChecked = appearance.StrokeEnabled; shadowCheckBox.IsChecked = appearance.ShadowEnabled; animateCheckBox.IsChecked = appearance.AnimateLongLines;
+    translationCheckBox.IsChecked = appearance.ShowTranslation; romanizationCheckBox.IsChecked = appearance.ShowRomanization;
     if (!fontFamilyCombo.Items.Contains(appearance.FontFamilyName)) {
      var families = new List<string>((IEnumerable<string>)fontFamilyCombo.ItemsSource);
      families.Add(appearance.FontFamilyName);

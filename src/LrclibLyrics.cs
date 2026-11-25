@@ -39,7 +39,7 @@ namespace AMLyrics {
    return Normalize(artist);
   }
   public static string Normalize(string text) {
-   return Regex.Replace(ChineseScript(text ?? "", false).Normalize(NormalizationForm.FormKC), @"[\p{P}\p{Z}\s]", "").ToUpperInvariant();
+   return Regex.Replace(ChineseScript(text ?? "", false).Normalize(NormalizationForm.FormKC), @"[\p{P}\p{Z}\p{Cf}\s]", "").ToUpperInvariant();
   }
  }
  public sealed class LrclibRecord {

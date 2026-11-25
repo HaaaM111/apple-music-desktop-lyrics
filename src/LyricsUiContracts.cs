@@ -17,13 +17,16 @@ namespace AMLyrics {
   public bool StrokeEnabled = true;
   public bool ShadowEnabled = true;
   public bool AnimateLongLines = true;
+  public bool ShowTranslation;
+  public bool ShowRomanization;
 
   public LyricsDisplaySettings Clone() {
    return new LyricsDisplaySettings {
     FontSize = FontSize, ForegroundHex = ForegroundHex, FontFamilyName = FontFamilyName,
     FontWeightName = FontWeightName, StrokeHex = StrokeHex,
     BackgroundOpacity = BackgroundOpacity, StrokeEnabled = StrokeEnabled,
-    ShadowEnabled = ShadowEnabled, AnimateLongLines = AnimateLongLines
+    ShadowEnabled = ShadowEnabled, AnimateLongLines = AnimateLongLines,
+    ShowTranslation = ShowTranslation, ShowRomanization = ShowRomanization
    };
   }
 

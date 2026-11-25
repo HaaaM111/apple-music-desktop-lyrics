@@ -17,10 +17,12 @@ namespace AMLyrics {
   internal static readonly Brush Muted = Brush("#B0B0B8");
   readonly LyricsLinePresenter current = new LyricsLinePresenter();
   readonly LyricsLinePresenter next = new LyricsLinePresenter();
+  readonly LyricsLinePresenter third = new LyricsLinePresenter();
   readonly IMediaSource media;
   readonly LocalLyricsProvider local;
   readonly LyricSession lyrics;
   readonly LrclibLyricsProvider online;
+  readonly AppleMusicNativeLyricsService nativeLyrics;
   readonly LyricTiming timing = new LyricTiming();
   readonly LyricsDisplaySettings displaySettings = new LyricsDisplaySettings();
   readonly LyricsOverlayChrome overlayChrome;
@@ -32,6 +34,7 @@ namespace AMLyrics {
   bool userEnabled;
   bool startupInitialized;
   bool applyingPreferences;
+  bool threeTrackActive;
   string configurationNotice = string.Empty;
   string hotkeyNotice = string.Empty;
   string currentTrackHeading = "Apple Music 桌面歌词";
@@ -39,6 +42,7 @@ namespace AMLyrics {
   string currentSourceText = "自动歌词 · LRCLIB";
   string currentDetailNotice = string.Empty;
   string currentTimingLabel = "默认";
+  string currentLanguageStatus = string.Empty;
   readonly Grid contentRoot;
   readonly Border leftResizeHandle;
   readonly Border rightResizeHandle;
@@ -74,6 +78,7 @@ namespace AMLyrics {
    preferencesStore = new LyricsPreferencesStore(settingsPath);
    this.media = media; this.local = local;
    online = media is TestMediaSource ? null : new LrclibLyricsProvider();
+   nativeLyrics = media is TestMediaSource ? null : new AppleMusicNativeLyricsService();
    lyrics = new LyricSession(online == null ? new LyricsProviders(local) : new LyricsProviders(local, online));
    displaySettings.Normalize();
    Title = "Apple Music 桌面歌词";
@@ -98,23 +103,30 @@ namespace AMLyrics {
    settingsPanel.AppearanceChanged += (s,e) => {
     CopyDisplaySettings(settingsPanel.ReadAppearance(), displaySettings);
     ApplyDisplaySettings();
+    Refresh();
     SavePreferences();
    };
 
    current.ForegroundBrush = Ink; current.LyricsFontWeight = FontWeights.SemiBold;
    next.ForegroundBrush = Muted;
+   third.ForegroundBrush = Muted;
+   third.Visibility = Visibility.Collapsed;
    current.Text = "等待 Apple Music";
    next.Text = "播放歌曲后，在这里显示歌词";
+   third.Text = "";
    AutomationProperties.SetName(current, "当前歌词或状态");
    AutomationProperties.SetName(next, "下一句歌词或说明");
+   AutomationProperties.SetName(third, "第三轨翻译歌词");
 
    contentRoot = new Grid { Background = Brushes.Transparent };
    var tracks = new Grid { Margin = new Thickness(LyricsLayoutMetrics.HorizontalPadding, 0, LyricsLayoutMetrics.HorizontalPadding, 4), VerticalAlignment = VerticalAlignment.Top };
    tracks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
    tracks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-   Grid.SetRow(current, 0); Grid.SetRow(next, 1);
+   tracks.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+   Grid.SetRow(current, 0); Grid.SetRow(next, 1); Grid.SetRow(third, 2);
    next.Margin = new Thickness(0, LyricsLayoutMetrics.TrackGap, 0, 0);
-   tracks.Children.Add(current); tracks.Children.Add(next);
+   third.Margin = new Thickness(0, LyricsLayoutMetrics.CompactTrackGap, 0, 0);
+   tracks.Children.Add(current); tracks.Children.Add(next); tracks.Children.Add(third);
    tracks.IsHitTestVisible = false;
    Grid.SetZIndex(overlayChrome, 10); contentRoot.Children.Add(overlayChrome);
    Grid.SetZIndex(tracks, 20); contentRoot.Children.Add(tracks);
@@ -190,7 +202,7 @@ namespace AMLyrics {
    };
    Closed += (s,e) => {
     SavePreferences();
-    closing = true; timer.Stop(); StopMediaPolling(); hitTestBridge.Dispose(); lyrics.Dispose(); if (online != null) online.Dispose(); media.Dispose();
+    closing = true; timer.Stop(); StopMediaPolling(); hitTestBridge.Dispose(); lyrics.Dispose(); if (nativeLyrics != null) nativeLyrics.Dispose(); if (online != null) online.Dispose(); media.Dispose();
     if (hotkeyRegistered) UnregisterHotKey(handle, 1);
     if (lockHotkeyRegistered) UnregisterHotKey(handle, 2);
     if (tray != null) { tray.Visible = false; tray.ContextMenuStrip.Dispose(); tray.Dispose(); }
@@ -247,12 +259,14 @@ namespace AMLyrics {
    }
   }
   void StartMediaPolling(bool resetSample) {
+   if (nativeLyrics != null) nativeLyrics.SetActive(true);
    var lifecycle = media as IMediaSourceLifecycle;
    if (lifecycle == null) return;
    if (resetSample) lifecycle.ResetSample();
    lifecycle.StartPolling();
   }
   void StopMediaPolling() {
+   if (nativeLyrics != null) nativeLyrics.SetActive(false);
    var lifecycle = media as IMediaSourceLifecycle;
    if (lifecycle != null) lifecycle.StopPolling();
   }
@@ -342,15 +356,31 @@ namespace AMLyrics {
    return IsKeyboardFocusWithin || overlayChrome.HoverToolbarSurface.IsKeyboardFocusWithin;
   }
   void UpdateHoverChrome() {
+   if (LyricsOverlayHover.IsWindowCloaked(this)) {
+    overlayChrome.SetHovered(false);
+    return;
+   }
    bool pointerInside = LyricsOverlayHover.IsPointerInside(this, overlayChrome.HoverToolbarSurface);
    overlayChrome.SetHovered(ShouldShowChrome(pointerInside, HasOverlayKeyboardFocus()));
+  }
+  internal void ApplyTrackLayoutMode(bool threeTrack) {
+   threeTrackActive = threeTrack;
+   third.Visibility = threeTrack ? Visibility.Visible : Visibility.Collapsed;
+   MaxHeight = threeTrack ? LyricsLayoutMetrics.MaximumThreeTrackHeight : LyricsLayoutMetrics.MaximumHeight;
+   double secondarySize = threeTrack ? LyricsLayoutMetrics.SecondaryThreeTrackFontSize(lyricSize) : LyricsLayoutMetrics.NextLineFontSize(lyricSize);
+   double gap = threeTrack ? LyricsLayoutMetrics.CompactTrackGap : LyricsLayoutMetrics.TrackGap;
+   next.RequestedFontSize = secondarySize;
+   third.RequestedFontSize = secondarySize;
+   next.Margin = new Thickness(0, gap, 0, 0);
+   third.Margin = new Thickness(0, gap, 0, 0);
   }
   void ApplyDisplaySettings() {
    displaySettings.Normalize(); lyricSize = LyricsLayoutMetrics.ClampFontSize(displaySettings.FontSize);
    current.RequestedFontSize = lyricSize;
-   next.RequestedFontSize = LyricsLayoutMetrics.NextLineFontSize(lyricSize);
    current.AnimateLongLines = displaySettings.AnimateLongLines;
    next.AnimateLongLines = displaySettings.AnimateLongLines;
+   third.AnimateLongLines = displaySettings.AnimateLongLines;
+   ApplyTrackLayoutMode(threeTrackActive);
    Brush foreground;
    try { foreground = Brush(displaySettings.ForegroundHex); } catch (Exception) { foreground = Ink; }
    Brush stroke;
@@ -360,12 +390,13 @@ namespace AMLyrics {
    FontWeight weight = FontWeights.Normal;
    if (displaySettings.FontWeightName == "半粗") weight = FontWeights.SemiBold;
    else if (displaySettings.FontWeightName == "粗体") weight = FontWeights.Bold;
-   current.ForegroundBrush = foreground; next.ForegroundBrush = new SolidColorBrush(Color.FromArgb(190, foreground is SolidColorBrush ? ((SolidColorBrush)foreground).Color.R : (byte)176, foreground is SolidColorBrush ? ((SolidColorBrush)foreground).Color.G : (byte)176, foreground is SolidColorBrush ? ((SolidColorBrush)foreground).Color.B : (byte)184));
-   current.StrokeBrush = stroke; next.StrokeBrush = stroke;
-   current.StrokeEnabled = displaySettings.StrokeEnabled; next.StrokeEnabled = displaySettings.StrokeEnabled;
-   current.ShadowEnabled = displaySettings.ShadowEnabled; next.ShadowEnabled = displaySettings.ShadowEnabled;
-   current.LyricsFontFamily = family; next.LyricsFontFamily = family;
-   current.LyricsFontWeight = weight; next.LyricsFontWeight = weight;
+   var secondaryBrush = new SolidColorBrush(Color.FromArgb(190, foreground is SolidColorBrush ? ((SolidColorBrush)foreground).Color.R : (byte)176, foreground is SolidColorBrush ? ((SolidColorBrush)foreground).Color.G : (byte)176, foreground is SolidColorBrush ? ((SolidColorBrush)foreground).Color.B : (byte)184));
+   current.ForegroundBrush = foreground; next.ForegroundBrush = secondaryBrush; third.ForegroundBrush = secondaryBrush;
+   current.StrokeBrush = stroke; next.StrokeBrush = stroke; third.StrokeBrush = stroke;
+   current.StrokeEnabled = displaySettings.StrokeEnabled; next.StrokeEnabled = displaySettings.StrokeEnabled; third.StrokeEnabled = displaySettings.StrokeEnabled;
+   current.ShadowEnabled = displaySettings.ShadowEnabled; next.ShadowEnabled = displaySettings.ShadowEnabled; third.ShadowEnabled = displaySettings.ShadowEnabled;
+   current.LyricsFontFamily = family; next.LyricsFontFamily = family; third.LyricsFontFamily = family;
+   current.LyricsFontWeight = weight; next.LyricsFontWeight = weight; third.LyricsFontWeight = weight;
    overlayChrome.SetBackdropOpacity(displaySettings.BackgroundOpacity);
   }
   void KeepWindowVisible() {
@@ -430,6 +461,8 @@ namespace AMLyrics {
    target.StrokeEnabled = source.StrokeEnabled;
    target.ShadowEnabled = source.ShadowEnabled;
    target.AnimateLongLines = source.AnimateLongLines;
+   target.ShowTranslation = source.ShowTranslation;
+   target.ShowRomanization = source.ShowRomanization;
   }
   void Bind(Key key, ModifierKeys mods, Action action) {
    var command = new RoutedCommand(); CommandBindings.Add(new CommandBinding(command, (s,e) => action()));

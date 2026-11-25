@@ -19,7 +19,15 @@ namespace AMLyrics {
  public sealed class LyricLine {
   public double TimestampSeconds;
   public string Text;
-  public LyricLine(double seconds, string text) { TimestampSeconds = seconds; Text = text; }
+  public string Translation = "";
+  public string Romanization = "";
+  public LyricLine(double seconds, string text) { TimestampSeconds = seconds; Text = text ?? ""; }
+  public LyricLine(double seconds, string text, string translation, string romanization) {
+   TimestampSeconds = seconds;
+   Text = text ?? "";
+   Translation = translation ?? "";
+   Romanization = romanization ?? "";
+  }
  }
  public sealed class LyricDocument {
   public List<LyricLine> Lines = new List<LyricLine>();

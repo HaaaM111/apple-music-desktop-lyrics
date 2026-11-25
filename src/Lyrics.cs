@@ -75,6 +75,7 @@ namespace AMLyrics {
  }
  public static class LrcParser {
   static readonly Regex Stamp = new Regex(@"\[(\d{1,4}):([0-5]?\d)(?:[\.:](\d{1,3}))?\]", RegexOptions.Compiled);
+  static readonly Regex WordStamp = new Regex(@"<\d{1,4}:[0-5]?\d(?:[\.:]\d{1,3})?>", RegexOptions.Compiled);
   static readonly Regex Offset = new Regex(@"\[offset:([+-]?\d+)\]", RegexOptions.IgnoreCase);
   static readonly Regex Metadata = new Regex(@"^\[(ar|al|ti|au|by|re|ve|length|offset):.*\]$", RegexOptions.IgnoreCase);
   public static LyricDocument Parse(string text, string source) {
@@ -91,8 +92,14 @@ namespace AMLyrics {
      if (match.Index != end) break;
      stamps.Add(match); end = match.Index + match.Length;
     }
-    if (stamps.Count == 0) { if (line.Length > 0 && !Metadata.IsMatch(line)) plain.Add(line); continue; }
-    string words = line.Substring(end).Trim();
+    if (stamps.Count == 0) {
+     if (line.Length > 0 && !Metadata.IsMatch(line)) {
+      string cleaned = WordStamp.Replace(line, "").Trim();
+      if (cleaned.Length > 0) plain.Add(cleaned);
+     }
+     continue;
+    }
+    string words = WordStamp.Replace(line.Substring(end), "").Trim();
     foreach (Match stamp in stamps) {
      double minutes = double.Parse(stamp.Groups[1].Value, CultureInfo.InvariantCulture);
      double seconds = double.Parse(stamp.Groups[2].Value, CultureInfo.InvariantCulture);
@@ -102,9 +109,32 @@ namespace AMLyrics {
     }
    }
    if (document.Lines.Count > 0) {
-    // Same timestamp may represent a translation. Keep both in stable source order.
-    document.Lines = document.Lines.OrderBy(l => l.TimestampSeconds)
-     .GroupBy(l => l.TimestampSeconds).Select(g => new LyricLine(g.Key, string.Join("\n", g.Select(l => l.Text).Distinct()))).ToList();
+    // Same timestamp may represent a translation/romanization, or an occasional overlapping backing-vocal line in monolingual LRCs.
+    var groups = document.Lines.OrderBy(l => l.TimestampSeconds)
+     .GroupBy(l => l.TimestampSeconds)
+     .Select(g => {
+      var parts = g.Select(l => l.Text).Distinct().ToList();
+      var nonEmpty = parts.Where(p => !string.IsNullOrWhiteSpace(p)).ToList();
+      return new { Key = g.Key, Parts = parts, NonEmpty = nonEmpty };
+     }).ToList();
+
+    int totalNonEmptyGroups = groups.Count(g => g.NonEmpty.Count >= 1);
+    int multiLineGroups = groups.Count(g => g.NonEmpty.Count >= 2);
+    bool treatAsMultiTrack =
+     (totalNonEmptyGroups <= 4 && multiLineGroups >= 1) ||
+     (multiLineGroups >= 3 && (double)multiLineGroups / Math.Max(1, totalNonEmptyGroups) >= 0.25);
+
+    document.Lines = groups.Select(g => {
+     string joinedText = treatAsMultiTrack
+      ? string.Join("\n", g.Parts)
+      : (g.Parts.Count > 1 ? string.Join(" / ", g.NonEmpty) : string.Join("\n", g.Parts));
+     var item = new LyricLine(g.Key, joinedText);
+     if (treatAsMultiTrack) {
+      if (g.NonEmpty.Count == 2) item.Translation = g.NonEmpty[1];
+      else if (g.NonEmpty.Count >= 3) { item.Romanization = g.NonEmpty[1]; item.Translation = g.NonEmpty[2]; }
+     }
+     return item;
+    }).ToList();
     document.IsSynchronized = true;
    } else {
     document.Lines = plain.Select(s => new LyricLine(0, s)).ToList();

@@ -25,6 +25,13 @@ class CoreTests {
   Check(!LrcParser.Parse("[ar:歌手]\n普通歌词\n下一行", "").IsSynchronized, "Parser: plain text stays unsynchronized");
   Check(LrcParser.Parse("[ar:歌手]\n\n", "").Lines.Count == 0, "Parser: metadata-only document is empty");
   Check(LrcParser.Parse("[00:00]\n[00:01]x", "").Lines[0].Text == "", "Parser: blank timed line preserves instrumental break");
+  var enhancedZh = LrcParser.Parse("[00:10.580]<00:10.580>曲<00:11.638>： <00:12.696>林<00:13.754>俊<00:14.812>杰<00:15.870>", "enhanced-zh");
+  Check(enhancedZh.IsSynchronized && enhancedZh.Lines.Count == 1 && enhancedZh.Lines[0].Text == "曲： 林俊杰", "Parser: strips Enhanced LRC word timestamps from Chinese lyrics");
+  Near(enhancedZh.Lines[0].TimestampSeconds, 10.58, "Parser: Enhanced LRC retains line timestamp");
+  var enhancedEn = LrcParser.Parse("[00:12.00]<00:12.00>Hello <00:12.50>world<00:13.00> <3\n[00:20.00]<00:20.00><00:24.00>", "enhanced-en");
+  Check(enhancedEn.IsSynchronized && enhancedEn.Lines.Count == 2 && enhancedEn.Lines[0].Text == "Hello world <3" && enhancedEn.Lines[1].Text == "", "Parser: strips Enhanced LRC word timestamps while keeping literal angle text and instrumental breaks");
+  var untimedEnhanced = LrcParser.Parse("<00:05.290>词<00:05.951>： <00:06.612>简胜", "enhanced-plain");
+  Check(!untimedEnhanced.IsSynchronized && untimedEnhanced.Lines.Count == 1 && untimedEnhanced.Lines[0].Text == "词： 简胜", "Parser: strips word timestamps on untimed lines without fabricating sync");
   string longLine = new string('长', 2400) + " English 混排 end";
   var longDoc = LrcParser.Parse("[00:05.00]" + longLine + "\n[00:05.00]翻译 translation\n[00:05.00]翻译 translation", "long");
   Check(longDoc.IsSynchronized && longDoc.Lines.Count == 1 && longDoc.Lines[0].Text.StartsWith("长长长") && longDoc.Lines[0].Text.Contains("English 混排 end") && longDoc.Lines[0].Text.Split('\n').Length == 2, "Parser: long mixed-script lyric and merged translation retained without truncation");

@@ -48,7 +48,22 @@ namespace AMLyrics {
    if (online != null) online.Invalidate(sample.Track);
    pendingSelection = lyrics.SelectAsync(sample.Track); Refresh();
   }
-  void Empty(string heading, string detail, string state) { displayedLineIndex = -1; current.Text = heading; next.Text = detail; currentStatusText = state; currentSourceText = "自动歌词 · LRCLIB"; }
+  void Empty(string heading, string detail, string state) { displayedLineIndex = -1; current.Text = heading; next.Text = detail; third.Text = ""; ApplyTrackLayoutMode(false); currentStatusText = state; currentSourceText = "自动歌词 · LRCLIB"; currentLanguageStatus = string.Empty; }
+  void UpdateLanguageStatus(bool hasTrans, bool hasRom, NativeLyricsSnapshot snap) {
+   if (hasTrans && hasRom) {
+    currentLanguageStatus = "当前歌曲已加载：原文 + 音译 + 翻译" + (displaySettings.ShowTranslation && displaySettings.ShowRomanization ? "（紧凑三轨）" : "");
+   } else if (hasTrans) {
+    currentLanguageStatus = "当前歌曲已加载：原文 + 翻译（未检测到音译）";
+   } else if (hasRom) {
+    currentLanguageStatus = "当前歌曲已加载：原文 + 音译（未检测到翻译）";
+   } else if (snap != null && snap.Availability == NativeLyricsAvailability.CloakedOtherDesktop) {
+    currentLanguageStatus = "Apple Music 位于其他虚拟桌面，系统暂隐藏其界面树；切回同一桌面后将自动融合并缓存原生翻译/音译";
+   } else if (snap != null && snap.Availability == NativeLyricsAvailability.PanelClosed) {
+    currentLanguageStatus = "请在 Apple Music 中展开右侧“歌词”面板，以自动读取原生翻译/音译";
+   } else {
+    currentLanguageStatus = "当前歌曲暂无可用的翻译或音译（可在 Apple Music 展开歌词或导入多语 LRC）";
+   }
+  }
   void UpdateSettingsPanel(bool fresh, TrackSnapshot track) {
    var state = lyrics.Read();
    string detail = string.IsNullOrWhiteSpace(currentDetailNotice) ? currentStatusText : currentDetailNotice;
@@ -58,16 +73,18 @@ namespace AMLyrics {
    settingsPanel.Apply(displaySettings, currentSourceText, detail, timingSummary,
     fresh && track != null && !state.Loading,
     !importing && fresh && track != null,
-    fresh && track != null && state.Document != null && state.Document.IsSynchronized);
+    fresh && track != null && state.Document != null && state.Document.IsSynchronized,
+    currentLanguageStatus);
   }
   internal void Refresh() {
    if (closing) return;
    currentDetailNotice = string.Empty;
+   currentLanguageStatus = string.Empty;
    var sample = media.Read();
    bool fresh = PlaybackMath.IsFresh(sample, DateTime.UtcNow);
    currentTimingLabel = "默认";
    if (!fresh || sample.Status != "Connected" || sample.Track == null) {
-    if (selectedKey.Length > 0) { selectedKey = ""; lyrics.Clear(); }
+    if (selectedKey.Length > 0) { selectedKey = ""; lyrics.Clear(); if (nativeLyrics != null) nativeLyrics.OnTrackChanged(""); }
     currentTrackHeading = "Apple Music 桌面歌词";
     if (!fresh) Empty("媒体连接中断", "正在重新连接；确认 Apple Music 仍在运行", "等待连接");
     else if (sample.Status == "Error") { Empty("媒体读取失败", "稍后自动重试；详情见提示", "获取失败"); currentDetailNotice = sample.Message ?? string.Empty; }
@@ -80,6 +97,7 @@ namespace AMLyrics {
    if (selectedKey != track.Key || (selectedDuration <= 0 && track.DurationSeconds > 0)) {
     selectedKey = track.Key; selectedDuration = track.DurationSeconds; notice = "";
     attempts = 1; retryAt = DateTime.UtcNow.AddSeconds(30);
+    if (nativeLyrics != null) nativeLyrics.OnTrackChanged(track.Key);
     pendingSelection = lyrics.SelectAsync(track);
    }
    var state = lyrics.Read();
@@ -87,33 +105,104 @@ namespace AMLyrics {
     attempts++; retryAt = DateTime.UtcNow.AddSeconds(60);
     pendingSelection = lyrics.SelectAsync(track); state = lyrics.Read();
    }
-   if (state.Loading) { Empty("正在自动获取歌词", "正在匹配当前歌曲的同步歌词", "自动匹配中"); UpdateSettingsPanel(fresh, track); return; }
+   if (state.Loading) {
+    if (nativeLyrics != null) nativeLyrics.SetNeedLiveFallback(false);
+    Empty("正在自动获取歌词", "正在匹配当前歌曲的同步歌词", "自动匹配中");
+    UpdateSettingsPanel(fresh, track);
+    return;
+   }
    if (state.Error.Length > 0) { Empty("暂时无法获取歌词", state.Error + " 可点击重试。", "稍后自动重试"); currentDetailNotice = state.Error; UpdateSettingsPanel(fresh, track); return; }
    if (notice.Length > 0 && noticeKey == track.Key) { Empty("歌词导入未完成", notice, "请重试导入"); UpdateSettingsPanel(fresh, track); return; }
    var doc = state.Document;
-   if (doc == null || doc.Lines.Count == 0) { Empty("未找到匹配歌词", "已自动查询；可以重试，或使用本地备用歌词", "已连接 Apple Music"); UpdateSettingsPanel(fresh, track); return; }
+   bool hasLocalOverride = doc != null && !string.IsNullOrEmpty(doc.Source) && doc.Source.StartsWith("本地", StringComparison.Ordinal);
+   LyricDocument enriched = null;
+   if (doc != null && doc.IsSynchronized && nativeLyrics != null && !hasLocalOverride) {
+    enriched = nativeLyrics.TryEnrich(track.Key, doc) ?? nativeLyrics.TryGetCachedEnriched(track.Key);
+    if (enriched != null) doc = enriched;
+   }
+   bool docHasRequestedExtra = false;
+   if (doc != null && doc.Lines.Count > 0) {
+    var probeTracks = LyricsTrackResolver.Resolve(doc, 0, displaySettings.ShowTranslation, displaySettings.ShowRomanization);
+    docHasRequestedExtra =
+     (displaySettings.ShowTranslation && probeTracks.HasTranslation) ||
+     (displaySettings.ShowRomanization && probeTracks.HasRomanization);
+   }
+   bool wantsNativeFallback = !hasLocalOverride && (doc == null || !doc.IsSynchronized ||
+    (enriched == null && (displaySettings.ShowTranslation || displaySettings.ShowRomanization) && !docHasRequestedExtra));
+   if (nativeLyrics != null) nativeLyrics.SetNeedLiveFallback(wantsNativeFallback);
+   if (wantsNativeFallback && nativeLyrics != null) {
+    var nativeSnap = nativeLyrics.ReadSnapshot();
+    bool snapSupportsRequested = nativeSnap != null &&
+     nativeSnap.Availability == NativeLyricsAvailability.Available &&
+     nativeSnap.Entries.Count > 0 &&
+     nativeLyrics.IsFreshForCurrentTrack(nativeSnap) &&
+     (doc == null || !doc.IsSynchronized ||
+      (displaySettings.ShowTranslation && nativeSnap.HasTranslation) ||
+      (displaySettings.ShowRomanization && (nativeSnap.HasRomanization ||
+       nativeSnap.Entries.Any(e => e != null && !e.IsInstrumental && KoreanRomanizer.ContainsHangul(e.Text)))));
+    if (snapSupportsRequested) {
+     var liveLines = NativeLyricsAligner.ToLiveLines(nativeSnap);
+     var resolvedLive = LyricsTrackResolver.ResolveLines(liveLines, nativeSnap.ActiveIndex, displaySettings.ShowTranslation, displaySettings.ShowRomanization);
+     ApplyTrackLayoutMode(resolvedLive.ShowTertiary);
+     displayedLineIndex = nativeSnap.ActiveIndex;
+     current.Text = resolvedLive.Primary;
+     next.Text = resolvedLive.Secondary;
+     third.Text = resolvedLive.Tertiary;
+     currentSourceText = "Apple Music 原生歌词（实时跟随）";
+     currentStatusText = track.IsPlaying ? "原生同步中" : "已暂停";
+     UpdateLanguageStatus(resolvedLive.HasTranslation, resolvedLive.HasRomanization, nativeSnap);
+     UpdateSettingsPanel(fresh, track);
+     return;
+    }
+   }
+   if (doc == null || doc.Lines.Count == 0) {
+    Empty("未找到匹配歌词", "已自动查询；可以重试，或使用本地备用歌词", "已连接 Apple Music");
+    if (nativeLyrics != null) UpdateLanguageStatus(false, false, nativeLyrics.ReadSnapshot());
+    UpdateSettingsPanel(fresh, track);
+    return;
+   }
    currentSourceText = doc.Source;
    if (!doc.IsSynchronized) {
     displayedLineIndex = -1;
-    current.Text = doc.Lines[0].Text;
-    next.Text = doc.Lines.Count > 1 ? doc.Lines[1].Text : "此文件没有时间戳";
-    currentStatusText = "仅有非同步歌词"; UpdateSettingsPanel(fresh, track); return;
+    ApplyTrackLayoutMode(false);
+    string firstOrig, firstRom, firstTrans;
+    LyricsTrackResolver.ExtractParts(doc.Lines[0], out firstOrig, out firstRom, out firstTrans);
+    current.Text = firstOrig;
+    if (doc.Lines.Count > 1) {
+     string secondOrig, secondRom, secondTrans;
+     LyricsTrackResolver.ExtractParts(doc.Lines[1], out secondOrig, out secondRom, out secondTrans);
+     next.Text = secondOrig;
+    } else {
+     next.Text = "此文件没有时间戳";
+    }
+    third.Text = "";
+    currentStatusText = "仅有非同步歌词";
+    UpdateLanguageStatus(false, false, nativeLyrics == null ? null : nativeLyrics.ReadSnapshot());
+    UpdateSettingsPanel(fresh, track);
+    return;
    }
    if (!sample.TimelineReliable) {
-    current.Text = "时间轴不可用"; next.Text = "已加载同步歌词，等待可靠播放位置"; currentStatusText = "同步已暂停"; UpdateSettingsPanel(fresh, track); return;
+    ApplyTrackLayoutMode(false); third.Text = "";
+    current.Text = "时间轴不可用"; next.Text = "已加载同步歌词，等待可靠播放位置"; currentStatusText = "同步已暂停";
+    UpdateSettingsPanel(fresh, track);
+    return;
    }
    double offset = timing.Read(track.Key);
    double position = LyricTiming.Position(sample, DateTime.UtcNow, offset);
    int index = PlaybackMath.FindLine(doc.Lines, position);
    displayedLineIndex = index;
-   current.Text = index < 0 ? "前奏" : (doc.Lines[index].Text.Length == 0 ? "间奏" : doc.Lines[index].Text);
-   next.Text = index + 1 < doc.Lines.Count ? doc.Lines[index + 1].Text : "";
+   var resolved = LyricsTrackResolver.Resolve(doc, index, displaySettings.ShowTranslation, displaySettings.ShowRomanization);
+   ApplyTrackLayoutMode(resolved.ShowTertiary);
+   current.Text = resolved.Primary;
+   next.Text = resolved.Secondary;
+   third.Text = resolved.Tertiary;
    currentStatusText = track.IsPlaying ? "同步中" : "已暂停";
    double adjustment = offset - LyricTiming.DefaultLeadSeconds;
    if (Math.Abs(adjustment) > 0.001) {
     string label = (adjustment > 0 ? "提前 " : "延后 ") + Math.Abs(adjustment).ToString("0.0") + " 秒";
     currentTimingLabel = label;
    }
+   UpdateLanguageStatus(resolved.HasTranslation, resolved.HasRomanization, nativeLyrics == null ? null : nativeLyrics.ReadSnapshot());
    UpdateSettingsPanel(fresh, track);
   }
   internal void SavePreview(string path, FrameworkElement surface = null) {
@@ -256,7 +345,7 @@ namespace AMLyrics {
    overlayChrome.Toolbar.MoveFocus(new System.Windows.Input.TraversalRequest(System.Windows.Input.FocusNavigationDirection.Next));
    check(!overlayChrome.Frame.IsVisible && !overlayChrome.Toolbar.IsVisible && !overlayChrome.SettingsButton.IsVisible &&
     !ShouldShowChrome(true, true) && ((SolidColorBrush)Background).Color.A == 0 && settingsPanel.IsVisible &&
-    settingsPanel.AreReservedLanguageButtonsHidden,
+    settingsPanel.TranslationCheckBox != null && settingsPanel.RomanizationCheckBox != null,
     "Window: opening settings hides all hover chrome and keeps it suppressed while pointer hovers over the overlay");
    CloseSettings();
    SetLocked(true); overlayChrome.SetHovered(ShouldShowChrome(true, false)); UpdateLayout();
@@ -292,17 +381,52 @@ namespace AMLyrics {
    overlayChrome.SetHovered(false);
    current.Text = "你愛我還是他你愛我還是他";
    UpdateLayout();
-   check(current.Presentation.Mode == LyricsLongLineMode.Fit && current.Presentation.FontSize == 16 && FitsTrackVertically(current),
-    "Window: a long lyric shrinks before overflowing and remains one line");
+   check(current.Presentation.FontSize == 48 && current.Presentation.FontSize > next.Presentation.FontSize &&
+    current.Presentation.Overflow > 0 &&
+    current.Presentation.Mode == (SystemParameters.ClientAreaAnimation ? LyricsLongLineMode.Marquee : LyricsLongLineMode.Ellipsis) &&
+    FitsTrackVertically(current),
+    "Window: Method 1 preserves requested font size on overflowing line and scrolls without shrinking");
    current.Text = string.Concat(System.Linq.Enumerable.Repeat("你愛我還是他", 12));
    current.AnimateLongLines = false;
    UpdateLayout();
-   check(current.Presentation.Mode == LyricsLongLineMode.Ellipsis && FitsTrackVertically(current), "Window: long lyrics ellipsize when animation is off");
+   check(current.Presentation.FontSize == 48 && current.Presentation.Mode == LyricsLongLineMode.Ellipsis && FitsTrackVertically(current), "Window: long lyrics ellipsize at requested font size when animation is off");
    current.AnimateLongLines = true;
    UpdateLayout();
-   check(current.Presentation.Mode == (SystemParameters.ClientAreaAnimation ? LyricsLongLineMode.Marquee : LyricsLongLineMode.Ellipsis) && FitsTrackVertically(current),
+   check(current.Presentation.FontSize == 48 && current.Presentation.Mode == (SystemParameters.ClientAreaAnimation ? LyricsLongLineMode.Marquee : LyricsLongLineMode.Ellipsis) && FitsTrackVertically(current),
     "Window: long lyrics respect the system animation setting");
    ResizeLyrics(-100); check(current.RequestedFontSize == 16, "Window: minimum font size");
+   Width = LyricsLayoutMetrics.DefaultWidth;
+   displaySettings.FontSize = LyricsLayoutMetrics.DefaultFontSize;
+   ApplyDisplaySettings();
+   var triSmokeDoc = new LyricDocument {
+    IsSynchronized = true, Source = "三轨验证",
+    Lines = new System.Collections.Generic.List<LyricLine> {
+     new LyricLine(10, "夢灯籠", "梦灯笼", "yumetourou"),
+     new LyricLine(20, "この声が届く", "这声音能传达到", "kono koe ga todoku")
+    }
+   };
+   var triTrack = fake.Sample.Track;
+   local.Assign(triTrack.Key, triSmokeDoc);
+   await lyrics.SelectAsync(triTrack);
+   fake.Sample.Track.PositionSeconds = 11.0;
+   displaySettings.ShowTranslation = false; displaySettings.ShowRomanization = false; ApplyDisplaySettings(); Refresh(); UpdateLayout();
+   check(current.Text == "夢灯籠" && next.Text == "この声が届く" && third.Visibility == Visibility.Collapsed && MaxHeight == LyricsLayoutMetrics.MaximumHeight,
+    "Window: 2-track default renders original and next line with third track collapsed");
+   displaySettings.ShowTranslation = true; displaySettings.ShowRomanization = false; ApplyDisplaySettings(); Refresh(); UpdateLayout();
+   check(current.Text == "夢灯籠" && next.Text == "梦灯笼" && third.Visibility == Visibility.Collapsed && MaxHeight == LyricsLayoutMetrics.MaximumHeight,
+    "Window: translation-only renders original and translation in 2-track mode");
+   displaySettings.ShowTranslation = false; displaySettings.ShowRomanization = true; ApplyDisplaySettings(); Refresh(); UpdateLayout();
+   check(current.Text == "夢灯籠" && next.Text == "yumetourou" && third.Visibility == Visibility.Collapsed && MaxHeight == LyricsLayoutMetrics.MaximumHeight,
+    "Window: romanization-only renders original and romanization in 2-track mode");
+   displaySettings.ShowTranslation = true; displaySettings.ShowRomanization = true; ApplyDisplaySettings(); Refresh(); UpdateLayout();
+   check(current.Text == "夢灯籠" && next.Text == "yumetourou" && third.Text == "梦灯笼" &&
+    third.Visibility == Visibility.Visible && MaxHeight == LyricsLayoutMetrics.MaximumThreeTrackHeight &&
+    FitsTrackVertically(current) && FitsTrackVertically(next) && FitsTrackVertically(third),
+    "Window: compact 3-track mode renders original, romanization, and translation without vertical clipping");
+   displaySettings.ShowTranslation = false; displaySettings.ShowRomanization = false; ApplyDisplaySettings();
+   local.Assign(fake.Sample.Track.Key, LrcParser.Parse("[00:00.00]界面验证\n[00:10.00]你愛我還是他\n[00:20.00]是不是真的他有比我好", "界面测试 · 本地 LRC"));
+   await lyrics.SelectAsync(fake.Sample.Track);
+   ResizeLyrics(-100);
    fake.Sample.Track.IsPlaying = false; fake.Sample.Track.PositionSeconds = 18.4;
    ChangeTiming(0.2, false);
    check(displayedLineIndex == 2 && currentTimingLabel == "提前 0.2 秒" && settingsPanel.TimingStatusText.Contains("提前 0.2 秒"), "Window: manual calibration displays only its adjustment from default");
@@ -335,7 +459,8 @@ namespace AMLyrics {
     Enabled = false, Locked = true, Width = 637,
     Display = new LyricsDisplaySettings {
      FontSize = 37, ForegroundHex = "#4A91C3", FontFamilyName = "Consolas", FontWeightName = "粗体",
-     StrokeHex = "#234567", BackgroundOpacity = 0.35, StrokeEnabled = false, ShadowEnabled = false, AnimateLongLines = false
+     StrokeHex = "#234567", BackgroundOpacity = 0.35, StrokeEnabled = false, ShadowEnabled = false, AnimateLongLines = false,
+     ShowTranslation = true, ShowRomanization = true
     }
    };
    const string startupTrackKey = "smoke-startup-track";
@@ -378,7 +503,8 @@ namespace AMLyrics {
     display.FontFamilyName == expectedDisplay.FontFamilyName && display.FontWeightName == expectedDisplay.FontWeightName,
     "Window: manual startup preserves font and foreground color");
    check(display.StrokeHex == expectedDisplay.StrokeHex && display.BackgroundOpacity == expectedDisplay.BackgroundOpacity &&
-    display.StrokeEnabled == expectedDisplay.StrokeEnabled && display.ShadowEnabled == expectedDisplay.ShadowEnabled && display.AnimateLongLines == expectedDisplay.AnimateLongLines,
+    display.StrokeEnabled == expectedDisplay.StrokeEnabled && display.ShadowEnabled == expectedDisplay.ShadowEnabled && display.AnimateLongLines == expectedDisplay.AnimateLongLines &&
+    display.ShowTranslation == expectedDisplay.ShowTranslation && display.ShowRomanization == expectedDisplay.ShowRomanization,
     "Window: manual startup preserves stroke, opacity and appearance switches");
    check(!startupStore.Current.Enabled && File.Exists(startupSettingsPath) && originalSettings.SequenceEqual(File.ReadAllBytes(startupSettingsPath)),
     "Window: manual startup leaves the source preferences unchanged and disabled");
@@ -440,6 +566,8 @@ namespace AMLyrics {
    } finally {
     positioned.Close();
    }
+   check(!LyricsOverlayHover.IsHandleCloaked(IntPtr.Zero) && !LyricsOverlayHover.IsWindowCloaked(this),
+    "Window: active overlay is not reported as DWM-cloaked");
   }
  }
  public sealed class TestMediaSource : IMediaSource, IMediaSourceLifecycle {

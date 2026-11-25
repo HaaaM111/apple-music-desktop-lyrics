@@ -47,7 +47,7 @@ function Invoke-WatchCommand {
  try {
   $stdout = $proc.StandardOutput.ReadToEnd()
   $stderr = $proc.StandardError.ReadToEnd()
-  if (-not $proc.WaitForExit(5000)) {
+  if (-not $proc.WaitForExit(8000)) {
    return @{ ExitCode = -1; Stdout = $stdout.Trim(); Stderr = 'Timed out waiting for AppleMusicLyricsWatch.exe.' }
   }
   return @{ ExitCode = $proc.ExitCode; Stdout = $stdout.Trim(); Stderr = $stderr.Trim() }
@@ -105,6 +105,11 @@ switch ($Action) {
    $launcherBuilt = Find-LatestBuildFile 'AppleMusicLyricsStandby.exe'
   }
   if ($null -eq $launcherBuilt) { throw 'AppleMusicLyricsStandby.exe could not be built.' }
+  $watchExe = Find-LatestBuildFile 'AppleMusicLyricsWatch.exe'
+  if ($null -ne $watchExe) {
+   $stopResult = Invoke-WatchCommand -WatchExe $watchExe -Arguments '--stop --include-host'
+   Write-Output "Stopped previous standby/host (ExitCode=$($stopResult.ExitCode))"
+  }
   if (-not (Test-Path -LiteralPath $standbyDir -PathType Container)) {
    $null = New-Item -ItemType Directory -Path $standbyDir -Force
   }

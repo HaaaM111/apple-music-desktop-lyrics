@@ -159,7 +159,9 @@ namespace AMLyrics {
      BackgroundOpacity = 0,
      StrokeEnabled = true,
      ShadowEnabled = true,
-     AnimateLongLines = true
+     AnimateLongLines = true,
+     ShowTranslation = false,
+     ShowRomanization = false
     }
    };
    preferences.Normalize();
@@ -217,7 +219,9 @@ namespace AMLyrics {
      BackgroundOpacity = FiniteOrDefault(display.BackgroundOpacity, 0),
      StrokeEnabled = display.StrokeEnabled,
      ShadowEnabled = display.ShadowEnabled,
-     AnimateLongLines = display.AnimateLongLines
+     AnimateLongLines = display.AnimateLongLines,
+     ShowTranslation = display.ShowTranslation,
+     ShowRomanization = display.ShowRomanization
     }
    };
   }
@@ -241,7 +245,9 @@ namespace AMLyrics {
      BackgroundOpacity = FiniteOrDefault(display.BackgroundOpacity, 0),
      StrokeEnabled = display.StrokeEnabled ?? true,
      ShadowEnabled = display.ShadowEnabled ?? true,
-     AnimateLongLines = display.AnimateLongLines ?? true
+     AnimateLongLines = display.AnimateLongLines ?? true,
+     ShowTranslation = display.ShowTranslation ?? false,
+     ShowRomanization = display.ShowRomanization ?? false
     }
    };
    preferences.Normalize();
@@ -282,6 +288,8 @@ namespace AMLyrics {
    public bool? StrokeEnabled { get; set; }
    public bool? ShadowEnabled { get; set; }
    public bool? AnimateLongLines { get; set; }
+   public bool? ShowTranslation { get; set; }
+   public bool? ShowRomanization { get; set; }
   }
  }
 }

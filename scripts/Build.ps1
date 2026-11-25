@@ -8,7 +8,7 @@ $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $compiler = Join-Path $framework 'csc.exe'
 if (-not (Test-Path -LiteralPath $compiler)) { throw '.NET Framework C# compiler is unavailable; see docs/README.md.' }
 $null = New-Item -ItemType Directory -Path $OutputDirectory
-$references = @('System.dll','System.Core.dll','System.Net.Http.dll','System.Xaml.dll','System.Web.Extensions.dll','System.Drawing.dll','System.Windows.Forms.dll','WindowsBase.dll','PresentationCore.dll','PresentationFramework.dll')
+$references = @('System.dll','System.Core.dll','System.Net.Http.dll','System.Xaml.dll','System.Web.Extensions.dll','System.Drawing.dll','System.Windows.Forms.dll','WindowsBase.dll','PresentationCore.dll','PresentationFramework.dll','UIAutomationClient.dll','UIAutomationTypes.dll')
 $arguments = @('/nologo','/target:winexe','/platform:x64','/optimize+','/warn:4','/utf8output',('/out:' + (Join-Path $OutputDirectory 'AppleMusicLyrics.exe')))
 foreach ($reference in $references) {
  $path = Join-Path $framework $reference
@@ -16,11 +16,11 @@ foreach ($reference in $references) {
  $arguments += '/reference:' + $path
 }
 $sources = @(
- 'Contracts.cs', 'DesktopPlacement.cs', 'HostIpc.cs', 'LiveVerification.cs', 'LrclibLyrics.cs',
- 'Lyrics.cs', 'LyricsHitTestBridge.cs', 'LyricsLayout.cs', 'LyricsOverlayChrome.cs',
- 'LyricsOverlayHover.cs', 'LyricsPreferencesStore.cs', 'LyricsSettingsPanel.cs',
- 'LyricsUiContracts.cs', 'LyricsWindow.cs', 'MediaSource.cs', 'ProcessJobGuard.cs',
- 'Program.cs', 'WindowBehavior.cs'
+ 'AppleMusicNativeLyrics.cs', 'Contracts.cs', 'DesktopPlacement.cs', 'HostIpc.cs', 'KoreanRomanizer.cs',
+ 'LiveVerification.cs', 'LrclibLyrics.cs', 'Lyrics.cs', 'LyricsHitTestBridge.cs', 'LyricsLayout.cs',
+ 'LyricsOverlayChrome.cs', 'LyricsOverlayHover.cs', 'LyricsPreferencesStore.cs', 'LyricsSettingsPanel.cs',
+ 'LyricsTrackResolver.cs', 'LyricsUiContracts.cs', 'LyricsWindow.cs', 'MediaSource.cs',
+ 'ProcessJobGuard.cs', 'Program.cs', 'WindowBehavior.cs'
 )
 foreach ($source in $sources) {
  $sourcePath = Join-Path (Join-Path $root 'src') $source

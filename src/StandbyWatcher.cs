@@ -11,6 +11,7 @@ namespace AMLyrics {
 
   sealed class WatcherOptions {
    public bool Stop;
+   public bool IncludeHost;
    public bool Status;
    public string TargetProcess = "AppleMusic.exe";
    public string HostExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AppleMusicLyrics.exe");
@@ -34,7 +35,7 @@ namespace AMLyrics {
    }
 
    if (options.Stop) {
-    return HandleStop(watchMutexName, stopEventName);
+    return HandleStop(watchMutexName, stopEventName, hostMutexName, pipeName, options.IncludeHost);
    }
 
    bool createdNew;
@@ -64,7 +65,12 @@ namespace AMLyrics {
    return 1;
   }
 
-  static int HandleStop(string watchMutexName, string stopEventName) {
+  static int HandleStop(
+   string watchMutexName,
+   string stopEventName,
+   string hostMutexName,
+   string pipeName,
+   bool includeHost) {
    EventWaitHandle stopEvent;
    if (EventWaitHandle.TryOpenExisting(stopEventName, out stopEvent)) {
     using (stopEvent) {
@@ -83,6 +89,28 @@ namespace AMLyrics {
      } finally {
       if (acquired) {
        try { watchMutex.ReleaseMutex(); } catch (ApplicationException) { }
+      }
+     }
+    }
+   }
+
+   if (includeHost) {
+    HostStateSnapshot state;
+    string error;
+    HostIpcClient.TrySend(pipeName, HostCommandKind.Shutdown, false, 1000, out state, out error);
+
+    Mutex hostMutex;
+    if (Mutex.TryOpenExisting(hostMutexName, out hostMutex)) {
+     using (hostMutex) {
+      bool acquired = false;
+      try {
+       acquired = hostMutex.WaitOne(3000);
+      } catch (AbandonedMutexException) {
+       acquired = true;
+      } finally {
+       if (acquired) {
+        try { hostMutex.ReleaseMutex(); } catch (ApplicationException) { }
+       }
       }
      }
     }
@@ -214,6 +242,8 @@ namespace AMLyrics {
     string arg = args[i];
     if (string.Equals(arg, "--stop", StringComparison.OrdinalIgnoreCase)) {
      options.Stop = true;
+    } else if (string.Equals(arg, "--include-host", StringComparison.OrdinalIgnoreCase)) {
+     options.IncludeHost = true;
     } else if (string.Equals(arg, "--status", StringComparison.OrdinalIgnoreCase)) {
      options.Status = true;
     } else if (string.Equals(arg, "--target-process", StringComparison.OrdinalIgnoreCase)) {

@@ -17,6 +17,7 @@ namespace AMLyrics {
   FontWeight weight = FontWeights.Normal;
   bool animateLongLines = true;
   bool strokeEnabled = true;
+  bool motionStrokeEnabled = true;
   bool shadowEnabled = true;
   bool alignInkToTop;
   double requestedFontSize = LyricsLayoutMetrics.DefaultFontSize;
@@ -105,16 +106,17 @@ namespace AMLyrics {
    var vertical = LyricsLineLayoutEngine.MeasureVertical(measured, glyphs, strokeEnabled, shadowEnabled, dpi.DpiScaleY);
    drawingHeight = vertical.Height;
    drawingOffsetY = vertical.DrawingOffsetY;
-   if (previous == null || previous.Text != Presentation.Text || previous.Mode != Presentation.Mode || previous.Overflow != Presentation.Overflow) UpdateMotion();
+   if (previous == null || previous.Text != Presentation.Text || previous.Mode != Presentation.Mode || previous.Overflow != Presentation.Overflow || previous.FontSize != Presentation.FontSize || motionStrokeEnabled != strokeEnabled) UpdateMotion();
    double nominalHeight = Math.Ceiling(requested.Height * dpi.DpiScaleY + 2) / dpi.DpiScaleY;
    return new Size(width, Math.Max(drawingHeight, nominalHeight));
   }
 
   void UpdateMotion() {
+   motionStrokeEnabled = strokeEnabled;
    shift.BeginAnimation(TranslateTransform.XProperty, null);
    shift.X = 0;
    if (Presentation.Mode == LyricsLongLineMode.Marquee) {
-    var animation = new DoubleAnimation(0, -Presentation.Overflow, Presentation.MotionDuration) {
+    var animation = new DoubleAnimation(0, -(Presentation.Overflow + (strokeEnabled ? 2 : 0)), Presentation.MotionDuration) {
      AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever,
      BeginTime = TimeSpan.FromMilliseconds(450)
     };

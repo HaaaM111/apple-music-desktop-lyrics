@@ -41,15 +41,10 @@ namespace AMLyrics {
    double measured = Math.Max(0, measure(text, fontSize));
    if (measured <= availableWidth) return new LyricsLinePresentation(text, fontSize, LyricsLongLineMode.Fit, 0, TimeSpan.Zero);
 
-   double minimumMeasured = Math.Max(0, measure(text, LyricsDisplaySettings.MinimumFontSize));
-   if (minimumMeasured <= availableWidth) {
-    return new LyricsLinePresentation(text, LyricsDisplaySettings.MinimumFontSize, LyricsLongLineMode.Fit, 0, TimeSpan.Zero);
-   }
-
-   double overflow = Math.Max(0, minimumMeasured - availableWidth);
-   if (!animate) return new LyricsLinePresentation(text, LyricsDisplaySettings.MinimumFontSize, LyricsLongLineMode.Ellipsis, overflow, TimeSpan.Zero);
-   double seconds = Math.Max(2.5, Math.Min(12, overflow / 35.0 + 2.5));
-   return new LyricsLinePresentation(text, LyricsDisplaySettings.MinimumFontSize, LyricsLongLineMode.Marquee, overflow, TimeSpan.FromSeconds(seconds));
+   double overflow = Math.Max(0, measured - availableWidth);
+   if (!animate) return new LyricsLinePresentation(text, fontSize, LyricsLongLineMode.Ellipsis, overflow, TimeSpan.Zero);
+   double seconds = Math.Max(2.5, Math.Min(12.0, overflow / 35.0 + 2.5));
+   return new LyricsLinePresentation(text, fontSize, LyricsLongLineMode.Marquee, overflow, TimeSpan.FromSeconds(seconds));
   }
 
   internal static FormattedText CreateWpfFormattedText(string text, double fontSize, Typeface typeface, double pixelsPerDip) {
@@ -86,16 +81,24 @@ namespace AMLyrics {
   public const double DefaultWidth = 760;
   public const double MinimumHeight = 96;
   public const double MaximumHeight = 220;
+  public const double MaximumThreeTrackHeight = 290;
   public const double DefaultFontSize = 30;
   public const double MinimumFontSize = 16;
   public const double MaximumFontSize = 48;
   public const double HorizontalPadding = 22;
   public const double TrackGap = 4;
+  public const double CompactTrackGap = 2;
   public const double NextLineScale = 0.68;
+  public const double SecondaryThreeTrackScale = 0.60;
 
   public static double ClampWidth(double width) { return Clamp(width, MinimumWidth, MaximumWidth); }
   public static double ClampFontSize(double size) { return Clamp(size, MinimumFontSize, MaximumFontSize); }
   public static double NextLineFontSize(double currentSize) { return Math.Max(MinimumFontSize, ClampFontSize(currentSize) * NextLineScale); }
+  public static double SecondaryThreeTrackFontSize(double currentSize) {
+   double clamped = ClampFontSize(currentSize);
+   double scaled = Math.Max(MinimumFontSize, clamped * SecondaryThreeTrackScale);
+   return clamped > MinimumFontSize ? Math.Min(clamped - 1, scaled) : MinimumFontSize;
+  }
 
   static double Clamp(double value, double minimum, double maximum) {
    return Math.Max(minimum, Math.Min(maximum, value));
